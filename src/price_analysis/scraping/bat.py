@@ -414,27 +414,22 @@ def parse_listing_from_soup(soup: BeautifulSoup, url: str = "") -> AuctionListin
             text = li.get_text(strip=True)
             text_lower = text.lower()
 
-            # Mileage: look for "Miles" or "mi"
+            # Mileage: look for "Miles" in li items
             if "mile" in text_lower and mileage is None:
                 mileage = parse_mileage(text)
 
-            # Color: often after "Exterior Color:" or similar
-            if "color" in text_lower and color is None:
-                # Extract value after colon if present
-                if ":" in text:
-                    color = text.split(":", 1)[-1].strip()
-                else:
-                    color = text
+            # Color: look for "Paint" keyword (e.g., "Aventurine Green Metallic Paint")
+            if "paint" in text_lower and color is None:
+                # Remove "Paint" suffix
+                color = text.replace("Paint", "").replace("paint", "").strip()
 
-        # Location: find after "Location" strong tag
+        # Location: find the <a> tag after <strong>Location</strong>
         location_label = essentials.find("strong", string=re.compile(r"Location", re.IGNORECASE))
         if location_label:
-            # Get text after the Location label
-            parent = location_label.parent
-            if parent:
-                full_text = parent.get_text(strip=True)
-                # Remove "Location" prefix
-                location = full_text.replace("Location", "").strip().lstrip(":")
+            # The location is in the next sibling <a> tag
+            next_sibling = location_label.find_next_sibling("a")
+            if next_sibling:
+                location = next_sibling.get_text(strip=True)
 
     # Parse derived fields from title
     year = parse_year(title)
@@ -491,6 +486,7 @@ def fetch_auctions(
     max_clicks: int = 50,
     delay: float = 2.5,
     headless: bool = True,
+    completed_only: bool = True,
 ) -> list[AuctionListing]:
     """Scrape completed BaT auctions for a search query.
 
@@ -502,12 +498,14 @@ def fetch_auctions(
         max_clicks: Maximum times to click "Show More" button
         delay: Delay between requests (seconds) - be polite!
         headless: Run browser without GUI
+        completed_only: If True, skip active auctions (no sold price)
 
     Returns:
         List of AuctionListing objects
     """
     driver = create_driver(headless=headless)
     listings: list[AuctionListing] = []
+    skipped_active = 0
 
     try:
         # Get listing URLs from search using Show More pagination
@@ -519,13 +517,20 @@ def fetch_auctions(
             logger.info(f"Processing listing {i + 1}/{len(urls)}")
             listing = fetch_listing_details(driver, url, delay)
             if listing:
-                listings.append(listing)
+                # Filter out active auctions if requested
+                if completed_only and listing.sale_price is None:
+                    skipped_active += 1
+                    logger.debug(f"Skipped active auction: {listing.title_raw}")
+                else:
+                    listings.append(listing)
             time.sleep(delay)  # Extra politeness
 
     finally:
         driver.quit()
 
-    logger.info(f"Successfully scraped {len(listings)} listings")
+    if skipped_active > 0:
+        logger.info(f"Skipped {skipped_active} active auctions (no sold price)")
+    logger.info(f"Successfully scraped {len(listings)} completed listings")
     return listings
 
 
@@ -557,3 +562,55 @@ def listings_to_dataframe(listings: list[AuctionListing]):
         for lst in listings
     ]
     return pd.DataFrame(records)
+
+
+class DataQualityError(Exception):
+    """Raised when scraped data fails quality checks."""
+
+    pass
+
+
+def validate_scraped_data(
+    df,
+    max_price_missing_pct: float = 0.10,
+    required_cols: list[str] | None = None,
+) -> None:
+    """Validate scraped data quality.
+
+    Raises DataQualityError if checks fail.
+
+    Args:
+        df: DataFrame from listings_to_dataframe()
+        max_price_missing_pct: Maximum allowed missing rate for sale_price (default 10%)
+        required_cols: Columns that cannot be 100% missing (default: all columns)
+
+    Raises:
+        DataQualityError: If any validation check fails
+    """
+    if len(df) == 0:
+        raise DataQualityError("No listings scraped - DataFrame is empty")
+
+    errors: list[str] = []
+
+    # Check for columns that are entirely missing
+    if required_cols is None:
+        required_cols = list(df.columns)
+
+    for col in required_cols:
+        if col in df.columns and df[col].isna().all():
+            errors.append(f"Column '{col}' is 100% missing")
+
+    # Check price missing rate
+    if "sale_price" in df.columns:
+        price_missing_pct = df["sale_price"].isna().mean()
+        if price_missing_pct > max_price_missing_pct:
+            errors.append(
+                f"sale_price missing rate {price_missing_pct:.1%} exceeds threshold {max_price_missing_pct:.1%}"
+            )
+
+    if errors:
+        raise DataQualityError("Data quality checks failed:\n  - " + "\n  - ".join(errors))
+
+    logger.info(
+        f"Data quality checks passed: {len(df)} listings, {df['sale_price'].notna().sum()} with prices"
+    )

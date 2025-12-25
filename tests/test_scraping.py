@@ -6,11 +6,13 @@ regression tests if BaT changes their DOM structure.
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from bs4 import BeautifulSoup
 
 from price_analysis.scraping.bat import (
     AuctionListing,
+    DataQualityError,
     parse_generation,
     parse_listing_from_soup,
     parse_mileage,
@@ -18,6 +20,7 @@ from price_analysis.scraping.bat import (
     parse_transmission,
     parse_trim,
     parse_year,
+    validate_scraped_data,
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -274,11 +277,21 @@ class TestFullListingParsing:
         assert listing.mileage == 6000
 
     def test_parse_992_listing_location(self, listing_992_html):
-        """Location extracted from essentials section."""
+        """Location extracted correctly (city, state only)."""
         soup = BeautifulSoup(listing_992_html, "html.parser")
         listing = parse_listing_from_soup(soup)
         assert listing.location is not None
         assert "Phoenix" in listing.location
+        # Should NOT contain the entire essentials section
+        assert "BaT Essentials" not in listing.location
+        assert "Seller" not in listing.location
+
+    def test_parse_992_listing_color(self, listing_992_html):
+        """Color extracted from essentials section."""
+        soup = BeautifulSoup(listing_992_html, "html.parser")
+        listing = parse_listing_from_soup(soup)
+        assert listing.color is not None
+        assert "Green" in listing.color or "Aventurine" in listing.color
 
     def test_parse_992_listing_all_required_fields_populated(self, listing_992_html):
         """All required fields for modeling are populated."""
@@ -321,3 +334,63 @@ class TestFullListingParsing:
         # 997.2 C4S 6-speed typically $50k-$100k
         assert listing.sale_price is not None
         assert 40000 < listing.sale_price < 150000
+
+
+class TestDataQualityValidation:
+    """Tests for validate_scraped_data() function."""
+
+    def test_valid_data_passes(self):
+        """Good data passes validation."""
+        df = pd.DataFrame(
+            {
+                "listing_url": ["url1", "url2"],
+                "sale_price": [100000, 120000],
+                "model_year": [2020, 2021],
+            }
+        )
+        # Should not raise
+        validate_scraped_data(df)
+
+    def test_empty_dataframe_raises(self):
+        """Empty DataFrame raises DataQualityError."""
+        df = pd.DataFrame()
+        with pytest.raises(DataQualityError, match="empty"):
+            validate_scraped_data(df)
+
+    def test_all_missing_column_raises(self):
+        """Column that is 100% missing raises error."""
+        df = pd.DataFrame(
+            {
+                "listing_url": ["url1", "url2"],
+                "sale_price": [100000, 120000],
+                "color": [None, None],  # All missing
+            }
+        )
+        with pytest.raises(DataQualityError, match="color.*100% missing"):
+            validate_scraped_data(df)
+
+    def test_price_missing_above_threshold_raises(self):
+        """Price missing rate above threshold raises error."""
+        df = pd.DataFrame(
+            {
+                "listing_url": ["url1", "url2", "url3", "url4", "url5"],
+                "sale_price": [100000, None, None, None, None],  # 80% missing
+            }
+        )
+        with pytest.raises(DataQualityError, match="sale_price missing rate"):
+            validate_scraped_data(df, max_price_missing_pct=0.10)
+
+    def test_price_missing_below_threshold_passes(self):
+        """Price missing rate below threshold passes."""
+        df = pd.DataFrame(
+            {
+                "listing_url": ["url1", "url2", "url3", "url4", "url5"],
+                "sale_price": [100000, 120000, 130000, 140000, None],  # 20% missing
+            }
+        )
+        # 20% missing is above 10% default, so should fail
+        with pytest.raises(DataQualityError):
+            validate_scraped_data(df, max_price_missing_pct=0.10)
+
+        # But passes with higher threshold
+        validate_scraped_data(df, max_price_missing_pct=0.25)
