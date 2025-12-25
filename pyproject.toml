@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "price-analysis"
+version = "0.1.0"
+description = "Bayesian hierarchical modeling of Porsche 911 auction prices"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pymc>=5.10",
+    "bambi>=0.13",
+    "arviz>=0.17",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "pyarrow",
+    "selenium",
+    "webdriver-manager",
+    "beautifulsoup4",
+    "requests",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "ipykernel",
+    "jupyter",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["price_analysis"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

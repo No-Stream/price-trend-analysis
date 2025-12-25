@@ -1,0 +1,29 @@
+name: price-analysis
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  # Bayesian stack
+  - pymc>=5.10
+  - bambi>=0.13
+  - arviz>=0.17
+  # Data
+  - pandas>=2.1
+  - numpy>=1.26
+  - pyarrow
+  # Scraping
+  - selenium
+  - beautifulsoup4
+  - requests
+  # Visualization
+  - matplotlib>=3.8
+  - seaborn>=0.13
+  # Dev tools
+  - pytest
+  - ruff
+  - ipykernel
+  - jupyter
+  - pip
+  - pip:
+      - webdriver-manager
