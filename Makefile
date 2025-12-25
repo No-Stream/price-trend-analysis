@@ -1,4 +1,4 @@
-.PHONY: format lint test check clean install
+.PHONY: format lint test test-fast check clean install env env-update
 
 # Format code with ruff
 format:
@@ -10,9 +10,13 @@ lint:
 	ruff check src tests
 	ruff format --check src tests notebooks
 
-# Run tests
+# Run all tests (default)
 test:
 	pytest tests -v
+
+# Run fast tests only (skip model fitting)
+test-fast:
+	pytest tests -v -m "not slow"
 
 # Run all checks (format + lint + test)
 check: lint test

@@ -223,7 +223,7 @@ def predict_price(
     )
 
     # Get posterior predictive samples
-    model.predict(idata, data=new_data, kind="pps", inplace=True)
+    model.predict(idata, data=new_data, kind="response", inplace=True)
 
     # Extract samples (shape: chains x draws)
     log_price_samples = idata.posterior_predictive["log_price"].values.flatten()

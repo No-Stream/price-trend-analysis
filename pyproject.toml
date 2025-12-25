@@ -62,3 +62,6 @@ indent-style = "space"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "slow: marks tests as slow (model fitting, deselect with '-m \"not slow\"')",
+]
