@@ -21,6 +21,31 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+
+def save_debug_page(
+    driver: webdriver.Chrome, filename: str, output_dir: str = "tests/fixtures"
+) -> str:
+    """Save current page source for debugging selectors.
+
+    Args:
+        driver: Selenium WebDriver with page loaded
+        filename: Output filename (without .html extension)
+        output_dir: Directory to save to
+
+    Returns:
+        Path to saved file
+    """
+    from pathlib import Path
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    filepath = output_path / f"{filename}.html"
+    filepath.write_text(driver.page_source)
+    logger.info(f"Saved debug page to {filepath}")
+    return str(filepath)
+
+
 # Generation mapping by model year for 911 (water-cooled era)
 # Note: Some years overlap between generations; title parsing helps disambiguate
 GENERATION_BY_YEAR: dict[tuple[int, int], str] = {
@@ -192,25 +217,64 @@ def parse_year(title: str) -> int | None:
 
 
 def parse_price(price_text: str) -> int | None:
-    """Parse price from BaT format (e.g., '$125,000').
+    """Parse price from BaT format (e.g., '$125,000', 'USD $137,000').
+
+    Extracts only the dollar amount, ignoring any surrounding text like dates.
 
     Args:
-        price_text: Raw price string
+        price_text: Raw price string (may contain other text)
 
     Returns:
         Price as int or None
     """
     if not price_text:
         return None
-    # Remove currency symbols, commas, and whitespace
-    cleaned = re.sub(r"[^\d]", "", price_text)
-    if cleaned:
+
+    # Look for dollar amount pattern: $123,456 or USD $123,456
+    match = re.search(r"\$[\d,]+", price_text)
+    if match:
+        # Remove $ and commas
+        cleaned = match.group().replace("$", "").replace(",", "")
         return int(cleaned)
     return None
 
 
+def parse_sale_date(date_text: str) -> datetime | None:
+    """Parse sale date from BaT format (e.g., 'on 12/24/25', 'December 24, 2025').
+
+    Args:
+        date_text: Raw date string
+
+    Returns:
+        datetime or None
+    """
+    if not date_text:
+        return None
+
+    # Try MM/DD/YY format (e.g., "12/24/25")
+    match = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", date_text)
+    if match:
+        month, day, year = match.groups()
+        year = int(year)
+        if year < 100:
+            year += 2000  # Convert 25 -> 2025
+        return datetime(year, int(month), int(day))
+
+    # Try "Month DD, YYYY" format
+    try:
+        from dateutil import parser as date_parser
+
+        return date_parser.parse(date_text)
+    except Exception:
+        pass
+
+    return None
+
+
 def parse_mileage(mileage_text: str) -> int | None:
-    """Parse mileage from BaT format (e.g., '15,000 Miles').
+    """Parse mileage from BaT format (e.g., '15,000 Miles', '6k Miles').
+
+    Handles both numeric formats (15,000) and shorthand (6k, 100k).
 
     Args:
         mileage_text: Raw mileage string
@@ -220,75 +284,177 @@ def parse_mileage(mileage_text: str) -> int | None:
     """
     if not mileage_text:
         return None
-    match = re.search(r"([\d,]+)\s*(?:Miles?|mi)", mileage_text, re.IGNORECASE)
-    if match:
-        return int(match.group(1).replace(",", ""))
+
+    # Handle shorthand like "6k Miles", "100k Miles"
+    shorthand_match = re.search(r"(\d+)k\s*(?:Miles?|mi)", mileage_text, re.IGNORECASE)
+    if shorthand_match:
+        return int(shorthand_match.group(1)) * 1000
+
+    # Handle full format like "15,000 Miles"
+    full_match = re.search(r"([\d,]+)\s*(?:Miles?|mi)", mileage_text, re.IGNORECASE)
+    if full_match:
+        return int(full_match.group(1).replace(",", ""))
+
     return None
 
 
 def fetch_search_results(
     driver: webdriver.Chrome,
     query: str,
-    max_pages: int = 20,
+    max_clicks: int = 50,
     delay: float = 2.5,
 ) -> list[str]:
-    """Fetch listing URLs from BaT search results.
+    """Fetch listing URLs from BaT search results using Show More button.
+
+    BaT uses infinite scroll with a "Show More" button instead of URL pagination.
+    This function clicks the button repeatedly to load all results.
 
     Args:
         driver: Selenium WebDriver
         query: Search query (e.g., "Porsche 911")
-        max_pages: Maximum pages to scrape
-        delay: Delay between page requests (seconds)
+        max_clicks: Maximum times to click "Show More" button
+        delay: Delay between clicks (seconds)
 
     Returns:
         List of listing URLs
     """
-    base_url = "https://bringatrailer.com/auctions/results/"
-    listing_urls: list[str] = []
+    url = f"https://bringatrailer.com/auctions/results/?s={query.replace(' ', '+')}"
+    logger.info(f"Fetching search results: {url}")
 
-    for page in range(1, max_pages + 1):
-        url = f"{base_url}?s={query.replace(' ', '+')}&page={page}"
-        logger.info(f"Fetching search page {page}: {url}")
+    driver.get(url)
+    time.sleep(delay)
 
-        driver.get(url)
-        time.sleep(delay)
+    # Wait for initial listings to load
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'a[href*="/listing/"]'))
+        )
+    except Exception:
+        logger.warning("No listings found on initial page load")
+        return []
 
+    # Click "Show More" repeatedly to load more results
+    clicks = 0
+    while clicks < max_clicks:
         try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "listing-card"))
+            # Find and click the Show More button
+            show_more = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.button-show-more"))
             )
+            driver.execute_script("arguments[0].click();", show_more)
+            clicks += 1
+            logger.info(f"Clicked 'Show More' ({clicks}/{max_clicks})")
+            time.sleep(delay)
         except Exception:
-            logger.warning(f"No results found on page {page}, stopping pagination")
+            logger.info("No more 'Show More' button available - reached end of results")
             break
 
-        soup = BeautifulSoup(driver.page_source, "html.parser")
+    # Extract all listing URLs from the page
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    listing_urls: set[str] = set()
 
-        # Find listing cards - adjust selector based on actual BaT structure
-        cards = soup.find_all("a", class_="listing-card")
-        if not cards:
-            # Try alternative selectors
-            cards = soup.find_all("a", href=re.compile(r"/listing/"))
+    # Find all listing links
+    for link in soup.select('a[href*="/listing/"]'):
+        href = link.get("href", "")
+        if href and "/listing/" in href:
+            if not href.startswith("http"):
+                href = f"https://bringatrailer.com{href}"
+            listing_urls.add(href)
 
-        if not cards:
-            logger.warning(f"No listing cards found on page {page}")
-            break
+    logger.info(f"Found {len(listing_urls)} unique listings after {clicks} 'Show More' clicks")
+    return list(listing_urls)
 
-        for card in cards:
-            href = card.get("href", "")
-            if href and "/listing/" in href:
-                if not href.startswith("http"):
-                    href = f"https://bringatrailer.com{href}"
-                listing_urls.append(href)
 
-        logger.info(f"Found {len(cards)} listings on page {page}")
+def parse_listing_from_soup(soup: BeautifulSoup, url: str = "") -> AuctionListing | None:
+    """Parse a BaT listing page from BeautifulSoup object.
 
-        # Check if there's a next page
-        next_button = soup.find("a", class_="next")
-        if not next_button:
-            logger.info("No more pages available")
-            break
+    This function extracts all fields from a parsed HTML page.
+    Separated from fetch_listing_details() to enable testing with saved HTML.
 
-    return list(set(listing_urls))  # Deduplicate
+    Args:
+        soup: BeautifulSoup object of listing page
+        url: Listing URL (for reference)
+
+    Returns:
+        AuctionListing or None if parsing fails
+    """
+    # Extract title
+    title_elem = soup.find("h1", class_="post-title") or soup.find("h1")
+    title = title_elem.get_text(strip=True) if title_elem else ""
+
+    # Extract sale price from span.info-value
+    price = None
+    price_elem = soup.select_one("span.info-value")
+    if price_elem:
+        price = parse_price(price_elem.get_text())
+
+    # Fallback: look for "Sold for" text
+    if price is None:
+        sold_text = soup.find(string=re.compile(r"Sold\s+for", re.IGNORECASE))
+        if sold_text:
+            price = parse_price(sold_text)
+
+    # Extract sale date from span.date within info-value
+    sale_date = None
+    date_elem = soup.select_one("span.info-value span.date")
+    if date_elem:
+        sale_date = parse_sale_date(date_elem.get_text())
+
+    # Extract essentials block for details
+    essentials = soup.select_one("div.essentials")
+    essentials_text = essentials.get_text() if essentials else ""
+
+    # Extract mileage from essentials li items
+    mileage = None
+    color = None
+    location = None
+
+    if essentials:
+        for li in essentials.select("li"):
+            text = li.get_text(strip=True)
+            text_lower = text.lower()
+
+            # Mileage: look for "Miles" or "mi"
+            if "mile" in text_lower and mileage is None:
+                mileage = parse_mileage(text)
+
+            # Color: often after "Exterior Color:" or similar
+            if "color" in text_lower and color is None:
+                # Extract value after colon if present
+                if ":" in text:
+                    color = text.split(":", 1)[-1].strip()
+                else:
+                    color = text
+
+        # Location: find after "Location" strong tag
+        location_label = essentials.find("strong", string=re.compile(r"Location", re.IGNORECASE))
+        if location_label:
+            # Get text after the Location label
+            parent = location_label.parent
+            if parent:
+                full_text = parent.get_text(strip=True)
+                # Remove "Location" prefix
+                location = full_text.replace("Location", "").strip().lstrip(":")
+
+    # Parse derived fields from title
+    year = parse_year(title)
+    generation = parse_generation(title, year) if year else None
+    trim = parse_trim(title)
+    transmission = parse_transmission(title, essentials_text)
+
+    return AuctionListing(
+        listing_url=url,
+        title_raw=title,
+        sale_price=price,
+        sale_date=sale_date,
+        model_year=year,
+        generation=generation,
+        trim=trim,
+        transmission=transmission,
+        mileage=mileage,
+        color=color,
+        location=location,
+    )
 
 
 def fetch_listing_details(
@@ -313,76 +479,7 @@ def fetch_listing_details(
         time.sleep(delay)
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
-
-        # Extract title
-        title_elem = soup.find("h1", class_="post-title")
-        if not title_elem:
-            title_elem = soup.find("h1")
-        title = title_elem.get_text(strip=True) if title_elem else ""
-
-        # Extract sale price (for completed auctions)
-        price = None
-        price_elem = soup.find("span", class_="info-value")
-        if price_elem:
-            price = parse_price(price_elem.get_text())
-
-        # Alternative: look for "Sold for" text
-        if price is None:
-            sold_text = soup.find(string=re.compile(r"Sold\s+for", re.IGNORECASE))
-            if sold_text:
-                price = parse_price(sold_text)
-
-        # Extract essentials block for details
-        essentials = soup.find("div", class_="essentials")
-        details_text = essentials.get_text() if essentials else ""
-
-        # Extract specific fields from essentials
-        mileage = None
-        color = None
-        location = None
-
-        # Look for labeled items in essentials
-        items = soup.find_all("li", class_="essential-item") or soup.find_all(
-            "div", class_="item"
-        )
-        for item in items:
-            text = item.get_text(strip=True).lower()
-            if "mile" in text:
-                mileage = parse_mileage(item.get_text())
-            elif "color" in text or any(c in text for c in ["black", "white", "silver", "red"]):
-                color = item.get_text(strip=True)
-            elif any(loc in text for loc in ["california", "texas", "florida", "new york"]):
-                location = item.get_text(strip=True)
-
-        # Extract sale date
-        sale_date = None
-        date_elem = soup.find("span", class_="date")
-        if date_elem:
-            try:
-                date_text = date_elem.get_text(strip=True)
-                sale_date = datetime.strptime(date_text, "%B %d, %Y")
-            except ValueError:
-                pass
-
-        # Parse derived fields
-        year = parse_year(title)
-        generation = parse_generation(title, year) if year else None
-        trim = parse_trim(title)
-        transmission = parse_transmission(title, details_text)
-
-        return AuctionListing(
-            listing_url=url,
-            title_raw=title,
-            sale_price=price,
-            sale_date=sale_date,
-            model_year=year,
-            generation=generation,
-            trim=trim,
-            transmission=transmission,
-            mileage=mileage,
-            color=color,
-            location=location,
-        )
+        return parse_listing_from_soup(soup, url)
 
     except Exception as e:
         logger.error(f"Error fetching {url}: {e}")
@@ -391,18 +488,18 @@ def fetch_listing_details(
 
 def fetch_auctions(
     query: str = "Porsche 911",
-    max_pages: int = 20,
+    max_clicks: int = 50,
     delay: float = 2.5,
     headless: bool = True,
 ) -> list[AuctionListing]:
     """Scrape completed BaT auctions for a search query.
 
-    Main entry point for scraping. Creates driver, fetches search results,
-    then fetches details for each listing.
+    Main entry point for scraping. Creates driver, fetches search results
+    using "Show More" button pagination, then fetches details for each listing.
 
     Args:
         query: Search term (e.g., "Porsche 911 992")
-        max_pages: Maximum search result pages to scrape
+        max_clicks: Maximum times to click "Show More" button
         delay: Delay between requests (seconds) - be polite!
         headless: Run browser without GUI
 
@@ -413,8 +510,8 @@ def fetch_auctions(
     listings: list[AuctionListing] = []
 
     try:
-        # Get listing URLs from search
-        urls = fetch_search_results(driver, query, max_pages, delay)
+        # Get listing URLs from search using Show More pagination
+        urls = fetch_search_results(driver, query, max_clicks, delay)
         logger.info(f"Found {len(urls)} unique listings to fetch")
 
         # Fetch each listing's details

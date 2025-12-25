@@ -1,22 +1,25 @@
 .PHONY: format lint test test-fast check clean install env env-update
 
+# Conda environment path
+CONDA_ENV := /opt/homebrew/Caskroom/miniconda/base/envs/price-analysis/bin
+
 # Format code with ruff
 format:
-	ruff format src tests notebooks
-	ruff check --fix src tests
+	$(CONDA_ENV)/ruff format src tests notebooks
+	$(CONDA_ENV)/ruff check --fix src tests
 
 # Lint code with ruff
 lint:
-	ruff check src tests
-	ruff format --check src tests notebooks
+	$(CONDA_ENV)/ruff check src tests
+	$(CONDA_ENV)/ruff format --check src tests notebooks
 
 # Run all tests (default)
 test:
-	pytest tests -v
+	$(CONDA_ENV)/pytest tests -v
 
 # Run fast tests only (skip model fitting)
 test-fast:
-	pytest tests -v -m "not slow"
+	$(CONDA_ENV)/pytest tests -v -m "not slow"
 
 # Run all checks (format + lint + test)
 check: lint test

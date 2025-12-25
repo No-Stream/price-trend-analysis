@@ -70,7 +70,15 @@ def build_model(df: pd.DataFrame, include_color: bool = False) -> bmb.Model:
     Returns:
         Bambi Model object (unfitted)
     """
-    required_cols = ["log_price", "age", "mileage_scaled", "sale_year", "generation", "trim", "transmission"]
+    required_cols = [
+        "log_price",
+        "age",
+        "mileage_scaled",
+        "sale_year",
+        "generation",
+        "trim",
+        "transmission",
+    ]
     missing = set(required_cols) - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
@@ -104,7 +112,7 @@ def fit_model(
     model: bmb.Model,
     draws: int = 2000,
     tune: int = 1000,
-    chains: int = 4,
+    chains: int = 8,
     random_seed: int = 42,
     **kwargs,
 ) -> az.InferenceData:
@@ -155,7 +163,9 @@ def check_diagnostics(idata: az.InferenceData) -> dict:
     summary = az.summary(idata)
 
     diagnostics = {
-        "n_divergences": idata.sample_stats.diverging.sum().item() if hasattr(idata, "sample_stats") else 0,
+        "n_divergences": idata.sample_stats.diverging.sum().item()
+        if hasattr(idata, "sample_stats")
+        else 0,
         "rhat_max": summary["r_hat"].max(),
         "rhat_above_105": (summary["r_hat"] > 1.05).sum(),
         "ess_bulk_min": summary["ess_bulk"].min(),
@@ -247,8 +257,14 @@ def predict_price(
             "mean": float(np.mean(price_samples)),
             "median": float(np.median(price_samples)),
             "std": float(np.std(price_samples)),
-            "ci_80": [float(np.percentile(price_samples, 10)), float(np.percentile(price_samples, 90))],
-            "ci_95": [float(np.percentile(price_samples, 2.5)), float(np.percentile(price_samples, 97.5))],
+            "ci_80": [
+                float(np.percentile(price_samples, 10)),
+                float(np.percentile(price_samples, 90)),
+            ],
+            "ci_95": [
+                float(np.percentile(price_samples, 2.5)),
+                float(np.percentile(price_samples, 97.5)),
+            ],
         },
         "samples": price_samples,
     }
@@ -317,12 +333,12 @@ def format_prediction_summary(pred: dict) -> str:
     p = pred["price"]
 
     lines = [
-        f"Price prediction for:",
+        "Price prediction for:",
         f"  {cfg['model_year']} {cfg['generation']} {cfg['trim']} ({cfg['transmission']})",
         f"  Mileage: {cfg['mileage']:,} miles",
         f"  Sale year: {cfg['sale_year']} (age: {cfg['age']} years)",
         "",
-        f"Predicted price:",
+        "Predicted price:",
         f"  Median: ${p['median']:,.0f}",
         f"  Mean:   ${p['mean']:,.0f}",
         f"  80% CI: ${p['ci_80'][0]:,.0f} - ${p['ci_80'][1]:,.0f}",
