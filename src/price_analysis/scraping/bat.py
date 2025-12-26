@@ -90,20 +90,6 @@ TRANSMISSION_PATTERNS: list[tuple[str, str]] = [
     (r"\bAutomatic\b", "Automatic"),
 ]
 
-# Keywords indicating non-car listings (parts, accessories, literature)
-# Be ULTRA conservative - only include terms that NEVER appear in car listings
-# When in doubt, leave it out - we filter by price downstream ($10k floor)
-NON_CAR_KEYWORDS: list[str] = [
-    "literature",
-    "automobilia",
-    "transaxle",  # Parts term - cars say "transmission" not "transaxle"
-]
-
-# No title patterns - too risky for false positives
-# e.g., "center-lock wheels" could describe a GT3 RS that HAS center-lock wheels
-NON_CAR_TITLE_PATTERNS: list[str] = []
-
-
 @dataclass
 class AuctionListing:
     """Represents a single BaT auction listing."""
@@ -230,30 +216,6 @@ def parse_year(title: str) -> int | None:
     return None
 
 
-def is_non_car_listing(card_text: str, title: str = "") -> bool:
-    """Check if listing text indicates a non-car item (parts, wheels, etc.).
-
-    Args:
-        card_text: Full card text from search results
-        title: Listing title (if available separately)
-
-    Returns:
-        True if this appears to be a non-car listing
-    """
-    text_lower = card_text.lower()
-    title_lower = title.lower() if title else text_lower
-
-    # Check for definitive non-car keywords (these rarely appear in car listings)
-    if any(keyword in text_lower for keyword in NON_CAR_KEYWORDS):
-        return True
-
-    # Check title-specific patterns (wheels, parts, etc.)
-    if any(pattern in title_lower for pattern in NON_CAR_TITLE_PATTERNS):
-        return True
-
-    return False
-
-
 def parse_price(price_text: str) -> int | None:
     """Parse price from BaT format (e.g., '$125,000', 'USD $137,000').
 
@@ -377,9 +339,12 @@ def fetch_search_results(
     clicks = 0
     while clicks < max_clicks:
         try:
-            # Find and click the Show More button
+            # Find and click the Show More button in the COMPLETED auctions section
+            # (page has two buttons - one for live, one for completed)
             show_more = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.button-show-more"))
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "#auctions-completed-container button.button-show-more")
+                )
             )
             driver.execute_script("arguments[0].click();", show_more)
             clicks += 1
@@ -389,85 +354,50 @@ def fetch_search_results(
             logger.info("No more 'Show More' button available - reached end of results")
             break
 
-    # Extract listing URLs from the page, optionally filtering to completed auctions
+    # Extract listing URLs from the completed auctions section
     soup = BeautifulSoup(driver.page_source, "html.parser")
     listing_urls: set[str] = set()
-    skipped_active = 0
-    skipped_non_car = 0
+    skipped_unsold = 0
 
-    # Try to find the completed auctions container first (more reliable filtering)
-    completed_container = soup.select_one("#auctions-completed-container, .auctions-completed")
-    search_scope = completed_container if completed_container else soup
-    if completed_container:
-        logger.info("Found completed auctions container - searching within it")
-    else:
-        logger.info("No completed container found - searching full page")
+    # Target the completed auctions container specifically
+    completed_container = soup.select_one("#auctions-completed-container")
+    if not completed_container:
+        logger.warning("Completed auctions container not found")
+        return []
 
-    # Find listing cards and check their status
-    # BaT uses different elements for completed vs active auctions:
-    # - Completed: <a class="listing-card bg-white-transparent"> (anchor tag)
-    # - Active: <div class="listing-card listing-card-separate"> (div tag)
-    cards = search_scope.select("a.listing-card, div.listing-card, li.listing-card, article.listing-card")
-    logger.info(f"Found {len(cards)} listing cards on page")
+    logger.info("Found completed auctions container")
+
+    # Completed auction cards are <a class="listing-card bg-white-transparent">
+    # (Live auctions use <div class="listing-card listing-card-separate">)
+    cards = completed_container.select("a.listing-card.bg-white-transparent")
+    logger.info(f"Found {len(cards)} completed auction cards")
 
     for card in cards:
-        # Get the listing URL - for <a> cards it's the href, for <div> cards we find nested <a>
-        if card.name == "a" and card.get("href"):
-            href = card.get("href", "")
-        else:
-            link = card.select_one('a[href*="/listing/"]')
-            if not link:
-                continue
-            href = link.get("href", "")
+        href = card.get("href", "")
         if not href or "/listing/" not in href:
             continue
 
         if not href.startswith("http"):
             href = f"https://bringatrailer.com{href}"
 
-        card_text = card.get_text()
-
-        # Try to extract title from card for more accurate filtering
-        title_elem = card.select_one("h3, .listing-card-title, a[href*='/listing/']")
-        card_title = title_elem.get_text(strip=True) if title_elem else ""
-
-        # Skip non-car listings (wheels, parts, literature, etc.)
-        if is_non_car_listing(card_text, card_title):
-            skipped_non_car += 1
-            logger.debug(f"Filtered non-car listing: {card_title[:80] if card_title else href}")
-            continue
+        card_text = card.get_text().lower()
 
         if completed_only:
-            # Check if this is a completed auction by looking for "Sold for" text
-            # Active auctions have countdown timers and "Bid:" labels (not "Bid to")
-            card_text_lower = card_text.lower()
-            if "sold for" in card_text_lower:
+            # Include if "sold for" present (confirms completed sale)
+            # Skip "bid to" listings (auction ended without sale)
+            if "sold for" in card_text:
                 listing_urls.add(href)
-            elif "countdown" in str(card) or "bid:" in card_text_lower or "bidding-bid" in str(card):
-                # Active auction - has countdown timer or current bid display
-                skipped_active += 1
+            elif "bid to" in card_text:
+                skipped_unsold += 1
+                logger.debug(f"Skipped unsold listing: {href}")
             else:
                 # Unknown status - include to be safe
                 listing_urls.add(href)
         else:
             listing_urls.add(href)
 
-    # Fallback: if card-based extraction found nothing, try simple link extraction
-    if not listing_urls:
-        logger.warning("Card-based extraction found no URLs, falling back to link extraction")
-        all_links = soup.select('a[href*="/listing/"]')
-        logger.warning(f"Fallback found {len(all_links)} total listing links")
-        for link in all_links:
-            href = link.get("href", "")
-            if href and "/listing/" in href:
-                if not href.startswith("http"):
-                    href = f"https://bringatrailer.com{href}"
-                listing_urls.add(href)
-
-    if skipped_non_car > 0:
-        logger.info(f"Filtered out {skipped_non_car} non-car listings (parts/wheels/etc)")
-    if skipped_active > 0:
-        logger.info(f"Filtered out {skipped_active} active auctions from search results")
+    if skipped_unsold > 0:
+        logger.info(f"Skipped {skipped_unsold} unsold listings (bid to)")
     logger.info(f"Found {len(listing_urls)} unique listings after {clicks} 'Show More' clicks")
     return list(listing_urls)
 

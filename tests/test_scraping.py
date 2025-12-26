@@ -13,7 +13,6 @@ from bs4 import BeautifulSoup
 from price_analysis.scraping.bat import (
     AuctionListing,
     DataQualityError,
-    is_non_car_listing,
     parse_generation,
     parse_listing_from_soup,
     parse_mileage,

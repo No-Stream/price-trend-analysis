@@ -3,7 +3,6 @@
 import pytest
 
 from price_analysis.scraping.bat import (
-    is_non_car_listing,
     parse_generation,
     parse_mileage,
     parse_price,
@@ -164,34 +163,3 @@ class TestParseMileage:
     def test_mileage_parsing(self, mileage_text: str | None, expected: int | None):
         """Mileage correctly parsed from various formats."""
         assert parse_mileage(mileage_text) == expected
-
-
-class TestIsNonCarListing:
-    """Test non-car listing detection (parts, wheels, literature).
-
-    Note: We use ULTRA conservative keyword filtering to avoid false positives.
-    Most parts listings are caught by the $10k price floor in validate_scraped_data().
-    """
-
-    @pytest.mark.parametrize(
-        "card_text,title,expected",
-        [
-            # Non-car listings caught by keywords (should return True)
-            ("Porsche Literature", "Collection of Porsche Literature & Automobilia", True),
-            ("Porsche Transaxle", "Porsche 930 4-Speed Transaxle", True),
-            # Wheels are NOT filtered by keywords (too risky - GT3 RS has center-lock wheels)
-            # These get filtered by $10k price floor instead
-            ("Center-Lock Wheels for Porsche", "20×9″ and 20×12″ Center-Lock Wheels for Porsche 991 GT3", False),
-            # Actual car listings (should return False)
-            ("2020 Porsche 911 Carrera 4S Coupe", "2020 Porsche 911 Carrera 4S Coupe", False),
-            ("2019 Porsche 911 GT3 RS Weissach", "2019 Porsche 911 GT3 RS Weissach", False),
-            # Edge cases that should NOT be filtered (common car description terms)
-            ("2020 Porsche 911 with limited-slip differential", "2020 Porsche 911 Carrera S", False),
-            ("1989 Porsche 911 with rebuilt gearbox", "1989 Porsche 911 Carrera", False),
-            ("2020 Porsche 911 with Sport Exhaust", "2020 Porsche 911 Carrera S", False),
-            ("Modified 1984 Porsche 911 6-Speed Manual Transmission", "Modified 1984 Porsche 911 Carrera Coupe", False),
-        ],
-    )
-    def test_non_car_detection(self, card_text: str, title: str, expected: bool):
-        """Non-car listings correctly identified."""
-        assert is_non_car_listing(card_text, title) == expected
