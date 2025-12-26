@@ -57,9 +57,9 @@ TRIM_TO_TIER = {
     "Carrera 4S": "sport",
     "Targa 4S": "sport",
     "GT3": "gt",
-    "GT3 RS": "gt",
     "GT3 Touring": "gt",
-    "GT2 RS": "gt",
+    "GT3 RS": "rs",
+    "GT2 RS": "rs",
     "Turbo": "turbo",
     "Turbo S": "turbo",
 }
@@ -210,6 +210,10 @@ def clean_listings(df: pd.DataFrame, drop_invalid: bool = False) -> pd.DataFrame
     mileage_std = df["mileage"].std()
     df["mileage_scaled"] = (df["mileage"] - mileage_mean) / mileage_std
 
+    # Low mileage flag for collector car premium (<10k miles)
+    # NA mileage treated as not low-mileage (will be filtered out by model prep anyway)
+    df["is_low_mileage"] = (df["mileage"] < 10000).fillna(False).astype(int)
+
     # Color categorization
     df["color_category"] = df["color"].apply(categorize_color)
 
@@ -315,10 +319,16 @@ def prepare_model_data(
     Returns:
         DataFrame ready for Bambi model fitting
     """
+    # Create is_low_mileage if not present (backwards compat with old parquet files)
+    if "is_low_mileage" not in df.columns and "mileage" in df.columns:
+        df = df.copy()
+        df["is_low_mileage"] = (df["mileage"] < 10000).fillna(False).astype(int)
+
     required_cols = [
         "log_price",
         "age",
         "mileage_scaled",
+        "is_low_mileage",
         "sale_year",
         "generation",
         "trim",

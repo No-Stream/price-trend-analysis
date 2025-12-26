@@ -111,6 +111,7 @@ def build_model(
         "log_price",
         "age",
         "mileage_scaled",
+        "is_low_mileage",
         "generation",
         trim_col,
         trans_col,
@@ -127,6 +128,7 @@ def build_model(
         "log_price ~ 1",
         "age",
         "mileage_scaled",
+        "is_low_mileage",
         generation_re,
         f"(1 | {trim_col})",
         f"(1 | {trans_col})",
@@ -320,10 +322,13 @@ def predict_price(
     age = sale_year - model_year
     mileage_scaled = (mileage - mileage_mean) / mileage_std
 
+    is_low_mileage = 1 if mileage < 10000 else 0
+
     new_data = pd.DataFrame(
         {
             "age": [age],
             "mileage_scaled": [mileage_scaled],
+            "is_low_mileage": [is_low_mileage],
             "sale_year": [sale_year],
             "generation": pd.Categorical([generation]),
         }

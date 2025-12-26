@@ -190,6 +190,7 @@ def minimal_model_data() -> pd.DataFrame:
         "log_price": np.random.normal(11.7, 0.3, n),  # ~$120k median
         "age": np.random.randint(1, 8, n),
         "mileage_scaled": np.random.normal(0, 1, n),
+        "is_low_mileage": np.random.choice([0, 1], n, p=[0.85, 0.15]),  # ~15% low mileage
         "sale_year": np.random.choice([2023, 2024], n),
         "generation": pd.Categorical(np.random.choice(generations, n)),
         "trim": pd.Categorical(np.random.choice(trims, n)),

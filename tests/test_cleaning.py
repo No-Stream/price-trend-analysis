@@ -114,7 +114,7 @@ class TestValidateListing:
         """Unusually low or high prices generate warnings."""
         row = pd.Series(
             {
-                "sale_price": 15000,  # Very low for a 911
+                "sale_price": 14999,  # Very low for a 911 (below $15k threshold)
                 "model_year": 2022,
                 "mileage": 15000,
                 "generation": "992.1",

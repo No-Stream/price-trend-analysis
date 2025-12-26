@@ -9,7 +9,9 @@
       "Bash(make:*)",
       "Bash(nb-cell:*)",
       "Bash(nb-overview:*)",
-      "Bash(nb-validate:*)"
+      "Bash(nb-validate:*)",
+      "Skill(llm-code-smell-refactoring)",
+      "Bash(nb-search:*)"
     ]
   }
 }
