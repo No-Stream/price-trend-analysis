@@ -36,6 +36,7 @@ DEFAULT_PRIORS = {
     "generation_sd": 0.5,
     "trim_sd": 0.7,  # widened from 0.5 - data wants more variation
     "transmission_sd": 0.3,
+    "body_style_sd": 0.3,  # coupe/cab/targa/speedster - expect modest variation
     "age_slope_sd": 0.1,  # depreciation rate variation across generations
     # Fixed effect priors (truncated Normal scale parameters)
     "age_sigma": 0.05,  # bounded ≤0 (older = cheaper)
@@ -49,6 +50,7 @@ def build_model(
     include_color: bool = False,
     include_sale_year: bool = True,
     include_generation_slope: bool = True,
+    include_body_style: bool = True,
     use_trim_tier: bool = False,
     use_trans_type: bool = False,
     priors: dict[str, Any] | None = None,
@@ -61,6 +63,7 @@ def build_model(
                  + (α_gen + β_age_gen * age)  [per generation, slope optional]
                  + α_trim                      [per trim or trim_tier]
                  + α_trans                     [per transmission]
+                 + α_body                      [per body_style: coupe/cab/targa/speedster]
                  + ε
 
     Random effects intuition
@@ -110,6 +113,8 @@ def build_model(
             Set to False when all listings are from same year (no variance).
         include_generation_slope: Whether to include random slope on age for
             generation. Set to False for sparse data (need ~20+ obs per gen).
+        include_body_style: Whether to include body_style as random intercept.
+            Captures coupe/cabriolet/targa/speedster price differences.
         use_trim_tier: Whether to use grouped trim_tier instead of individual
             trim levels. Requires prepare_model_data(group_trims=True).
         use_trans_type: Whether to use grouped trans_type (manual/pdk/auto)
@@ -119,6 +124,7 @@ def build_model(
             - 'generation_sd': Generation intercept SD (default 0.5)
             - 'trim_sd': Trim intercept SD (default 0.7)
             - 'transmission_sd': Transmission intercept SD (default 0.3)
+            - 'body_style_sd': Body style intercept SD (default 0.3)
             - 'age_slope_sd': Generation age slope SD (default 0.1)
             Fixed effect priors (truncated Normal sigma):
             - 'age_sigma': Age effect scale (default 0.05, bounded ≤0)
@@ -142,6 +148,8 @@ def build_model(
     ]
     if include_sale_year:
         required_cols.append("sale_year")
+    if include_body_style:
+        required_cols.append("body_style")
     missing = set(required_cols) - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
@@ -165,12 +173,17 @@ def build_model(
         color_idx = 4 if include_sale_year else 3
         formula_parts.insert(color_idx, "color_category")
 
+    if include_body_style:
+        formula_parts.append("(1 | body_style)")
+
     formula = " + ".join(formula_parts)
     logger.info(f"Model formula: {formula}")
 
     # Build priors
     prior_config = {**DEFAULT_PRIORS, **(priors or {})}
-    bambi_priors = _build_bambi_priors(prior_config, trim_col, trans_col, include_generation_slope)
+    bambi_priors = _build_bambi_priors(
+        prior_config, trim_col, trans_col, include_generation_slope, include_body_style
+    )
 
     model = bmb.Model(formula, data=df, priors=bambi_priors, family="gaussian")
     logger.info(f"Built model with {len(df)} observations")
@@ -179,7 +192,11 @@ def build_model(
 
 
 def _build_bambi_priors(
-    config: dict[str, float], trim_col: str, trans_col: str, include_slope: bool
+    config: dict[str, float],
+    trim_col: str,
+    trans_col: str,
+    include_slope: bool,
+    include_body_style: bool,
 ) -> dict[str, Any]:
     """Convert config dict to Bambi prior specifications.
 
@@ -188,6 +205,7 @@ def _build_bambi_priors(
         trim_col: Name of trim column ('trim' or 'trim_tier')
         trans_col: Name of transmission column ('transmission' or 'trans_type')
         include_slope: Whether model includes age slope on generation
+        include_body_style: Whether model includes body_style random intercept
 
     Returns:
         Dict of Bambi Prior objects
@@ -213,6 +231,11 @@ def _build_bambi_priors(
     if include_slope:
         priors["age|generation"] = bmb.Prior(
             "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["age_slope_sd"])
+        )
+
+    if include_body_style:
+        priors["1|body_style"] = bmb.Prior(
+            "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["body_style_sd"])
         )
 
     return priors
