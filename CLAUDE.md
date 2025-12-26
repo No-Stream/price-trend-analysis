@@ -9,15 +9,23 @@ Bayesian hierarchical modeling of Porsche 911 auction prices from Bring a Traile
 ## Environment
 
 ```bash
-# Use mamba (not base conda) for environment management
+# Create environment (use mamba, not base conda)
 ~/miniconda3/bin/mamba env create -f environment.yml
-~/miniconda3/bin/mamba activate price-analysis
 
-# Use uv (not pip) for package installs
+# Activate (use conda activate, not mamba activate)
+conda activate price-analysis
+
+# Add new packages (use uv, not pip)
+~/.local/bin/uv pip install <package> --python /opt/homebrew/Caskroom/miniconda/base/envs/price-analysis/bin/python
+
+# Install this package in editable mode
 ~/.local/bin/uv pip install -e . --python /opt/homebrew/Caskroom/miniconda/base/envs/price-analysis/bin/python
 ```
 
-**NEVER use base pip or conda resolvers** - always use mamba or uv.
+**Package management rules:**
+- Environment creation/updates: `mamba` (fast solver)
+- Adding packages: `uv pip install` (fast, respects env)
+- **NEVER** use base `pip` or `conda` resolvers
 
 ## Project Structure
 
@@ -36,12 +44,23 @@ notebooks/
 ## Commands
 
 ```bash
-make test        # Run all tests (~30s)
-make test-fast   # Skip model fitting tests (~3s)
-make format      # Format with ruff
-make lint        # Lint with ruff
-make check       # lint + test
+# Testing
+make test        # Run all tests including slow model fits (~30s)
+make test-fast   # Skip slow tests (~3s) - use for quick iteration
+
+# Code quality
+make format      # Auto-format with ruff (also fixes lint issues)
+make lint        # Check formatting and lint (no changes)
+make check       # lint + test (CI pipeline)
+
+# Environment
+make env         # Create conda environment from environment.yml
+make env-update  # Update environment (use after editing environment.yml)
+make install     # Install package in editable mode
+make clean       # Remove __pycache__, .pyc, etc.
 ```
+
+**Workflow:** `make format` before commits, `make test-fast` during dev, `make check` before PR.
 
 ## Key Design Decisions
 
@@ -50,9 +69,14 @@ make check       # lint + test
 ```python
 log_price ~ age + mileage_scaled + sale_year +
             (1 + age | generation) +  # Random intercept + slope
-            (1 | trim) +              # Random intercept only
-            (1 | transmission)        # Random intercept only
+            (1 | trim_tier) +         # Random intercept only (or trim if enough data)
+            (1 | trans_type)          # Random intercept only (or transmission)
 ```
+
+**Sparse data options** (use when sample sizes per group < 20):
+- `use_trim_tier=True`: Collapse trims → 4 tiers (base, sport, gt, turbo)
+- `use_trans_type=True`: Collapse transmissions → 3 types (manual, pdk, auto)
+- Weakly informative priors on RE SDs (HalfNormal σ=0.3-0.5)
 
 **Why crossed (not nested) random effects:**
 - "Manual premium" and "4S premium" are relatively consistent across generations
@@ -67,7 +91,13 @@ log_price ~ age + mileage_scaled + sale_year +
 
 Required: `listing_url`, `sale_price`, `sale_date`, `model_year`, `generation`, `trim`, `transmission`, `mileage`
 
-Derived: `age` (sale_year - model_year), `mileage_scaled`, `log_price`, `color_category`
+Derived:
+- `age` (sale_year - model_year)
+- `mileage_scaled` (z-scored)
+- `log_price`
+- `color_category` (PTS, special, standard)
+- `trim_tier` (base, sport, gt, turbo) - optional grouping
+- `trans_type` (manual, pdk, auto) - optional grouping
 
 ### Generation Mapping
 
@@ -101,5 +131,6 @@ Derived: `age` (sale_year - model_year), `mileage_scaled`, `log_price`, `color_c
 
 - Based on `KaledDahleh/bring-a-trailer-tracker` approach
 - Uses Selenium (BaT requires JS rendering)
-- Rate limit: 2-3 sec between requests
+- Rate limit: 1.0s between requests (configurable via `delay` param)
+- Progress bar via tqdm shows ETA
 - Selectors may need adjustment based on BaT DOM changes

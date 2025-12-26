@@ -38,6 +38,32 @@ VALID_TRIMS = {
 
 VALID_TRANSMISSIONS = {"PDK", "Manual", "Tiptronic", "Automatic"}
 
+# Transmission grouping: Automatic and Tiptronic are both torque converter autos
+TRANS_TO_TYPE = {
+    "Manual": "manual",
+    "PDK": "pdk",
+    "Automatic": "auto",
+    "Tiptronic": "auto",
+}
+
+# Trim grouping for sparse data scenarios
+# Groups trims into performance tiers to ensure adequate sample sizes
+TRIM_TO_TIER = {
+    "Carrera": "base",
+    "Carrera 4": "base",
+    "Targa": "base",
+    "Targa 4": "base",
+    "Carrera S": "sport",
+    "Carrera 4S": "sport",
+    "Targa 4S": "sport",
+    "GT3": "gt",
+    "GT3 RS": "gt",
+    "GT3 Touring": "gt",
+    "GT2 RS": "gt",
+    "Turbo": "turbo",
+    "Turbo S": "turbo",
+}
+
 # Special colors that command premiums
 PTS_KEYWORDS = ["pts", "paint to sample", "special order"]
 SPECIAL_COLORS = {
@@ -238,13 +264,53 @@ def get_summary_stats(df: pd.DataFrame) -> dict:
     }
 
 
-def prepare_model_data(df: pd.DataFrame) -> pd.DataFrame:
+def group_trim(trim: str | None) -> str:
+    """Map trim to performance tier for sparse data scenarios.
+
+    Groups trims into 4 tiers: base, sport, gt, turbo.
+    Unknown trims default to 'base'.
+
+    Args:
+        trim: Raw trim string
+
+    Returns:
+        Tier string
+    """
+    if trim is None or pd.isna(trim):
+        return "unknown"
+    return TRIM_TO_TIER.get(trim, "base")
+
+
+def group_transmission(trans: str | None) -> str:
+    """Map transmission to type (manual, pdk, auto).
+
+    Automatic and Tiptronic are both torque converter autos.
+    PDK is dual-clutch (different driving feel, different market).
+
+    Args:
+        trans: Raw transmission string
+
+    Returns:
+        Type string: 'manual', 'pdk', or 'auto'
+    """
+    if trans is None or pd.isna(trans):
+        return "unknown"
+    return TRANS_TO_TYPE.get(trans, "auto")
+
+
+def prepare_model_data(
+    df: pd.DataFrame, group_trims: bool = False, group_trans: bool = False
+) -> pd.DataFrame:
     """Prepare cleaned data for Bayesian modeling.
 
     Filters to valid records with all required fields for modeling.
 
     Args:
         df: Cleaned listings DataFrame
+        group_trims: If True, collapse trim levels into 4 performance tiers
+            (base, sport, gt, turbo). Useful when sample sizes per trim are small.
+        group_trans: If True, collapse Automatic/Tiptronic into 'auto'.
+            Results in 3 levels: manual, pdk, auto.
 
     Returns:
         DataFrame ready for Bambi model fitting
@@ -261,8 +327,23 @@ def prepare_model_data(df: pd.DataFrame) -> pd.DataFrame:
 
     model_df = df.dropna(subset=required_cols).copy()
 
+    if group_trims:
+        model_df["trim_tier"] = model_df["trim"].apply(group_trim)
+        logger.info(f"Grouped trims into tiers: {model_df['trim_tier'].value_counts().to_dict()}")
+
+    if group_trans:
+        model_df["trans_type"] = model_df["transmission"].apply(group_transmission)
+        logger.info(
+            f"Grouped transmissions into types: {model_df['trans_type'].value_counts().to_dict()}"
+        )
+
     # Convert categoricals to proper type for Bambi
-    for col in ["generation", "trim", "transmission", "color_category"]:
+    cat_cols = ["generation", "trim", "transmission", "color_category"]
+    if group_trims:
+        cat_cols.append("trim_tier")
+    if group_trans:
+        cat_cols.append("trans_type")
+    for col in cat_cols:
         if col in model_df.columns:
             model_df[col] = model_df[col].astype("category")
 

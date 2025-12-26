@@ -6,7 +6,8 @@
       "WebFetch(domain:medium.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:bringatrailer.com)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(nb-cell:*)"
     ]
   }
 }

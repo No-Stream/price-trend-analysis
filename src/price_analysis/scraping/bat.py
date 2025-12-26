@@ -17,6 +17,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+from tqdm import tqdm
 from webdriver_manager.chrome import ChromeDriverManager
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -89,6 +90,7 @@ TRANSMISSION_PATTERNS: list[tuple[str, str]] = [
     (r"\bTiptronic\b", "Tiptronic"),
     (r"\bAutomatic\b", "Automatic"),
 ]
+
 
 @dataclass
 class AuctionListing:
@@ -302,7 +304,7 @@ def fetch_search_results(
     driver: webdriver.Chrome,
     query: str,
     max_clicks: int = 50,
-    delay: float = 2.5,
+    delay: float = 1.0,
     completed_only: bool = True,
 ) -> list[str]:
     """Fetch listing URLs from BaT search results using Show More button.
@@ -521,7 +523,7 @@ def fetch_listing_details(
 def fetch_auctions(
     query: str = "Porsche 911",
     max_clicks: int = 50,
-    delay: float = 2.5,
+    delay: float = 1.0,
     headless: bool = True,
     completed_only: bool = True,
 ) -> list[AuctionListing]:
@@ -551,18 +553,16 @@ def fetch_auctions(
         logger.info(f"Found {len(urls)} unique listings to fetch")
 
         # Fetch each listing's details
-        for i, url in enumerate(urls):
-            logger.info(f"Processing listing {i + 1}/{len(urls)}")
+        for url in tqdm(urls, desc="Fetching listings", unit="listing"):
             listing = fetch_listing_details(driver, url, delay)
             if listing is None:
                 logger.warning(f"Failed to parse listing: {url}")
             elif completed_only and listing.sale_price is None:
                 # Secondary check: some listings may slip through if card text was unclear
                 skipped_active += 1
-                logger.info(f"Skipped (no price - likely active): {listing.title_raw[:60]}...")
             else:
                 listings.append(listing)
-            time.sleep(delay)  # Extra politeness
+            time.sleep(delay)
 
     finally:
         driver.quit()
@@ -640,7 +640,9 @@ def validate_scraped_data(
         low_price_mask = df["sale_price"] < min_price
         n_filtered = low_price_mask.sum()
         if n_filtered > 0:
-            logger.info(f"Filtered {n_filtered} listings below ${min_price:,} (likely parts/salvage)")
+            logger.info(
+                f"Filtered {n_filtered} listings below ${min_price:,} (likely parts/salvage)"
+            )
             df = df[~low_price_mask].copy()
 
     if len(df) == 0:

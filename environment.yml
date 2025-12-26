@@ -16,6 +16,7 @@ dependencies:
   - selenium
   - beautifulsoup4
   - requests
+  - tqdm
   # Visualization
   - matplotlib>=3.8
   - seaborn>=0.13
