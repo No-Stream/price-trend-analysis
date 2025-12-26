@@ -193,6 +193,7 @@ def fit_model(
     chains: int = 8,
     target_accept: float = 0.9,
     random_seed: int = 42,
+    include_log_likelihood: bool = True,
     **kwargs,
 ) -> az.InferenceData:
     """Fit Bayesian model using MCMC sampling.
@@ -205,6 +206,8 @@ def fit_model(
         target_accept: Target acceptance rate for NUTS sampler. Higher values
             (e.g., 0.95, 0.99) reduce divergences but slow sampling.
         random_seed: Random seed for reproducibility
+        include_log_likelihood: Whether to compute pointwise log-likelihood
+            for LOO-CV model comparison. Default True.
         **kwargs: Additional arguments passed to model.fit()
 
     Returns:
@@ -214,12 +217,18 @@ def fit_model(
         f"Fitting model: {draws} draws, {tune} tune, {chains} chains, target_accept={target_accept}"
     )
 
+    # Merge idata_kwargs with any user-provided kwargs
+    idata_kwargs = kwargs.pop("idata_kwargs", {})
+    if include_log_likelihood:
+        idata_kwargs["log_likelihood"] = True
+
     idata = model.fit(
         draws=draws,
         tune=tune,
         chains=chains,
         target_accept=target_accept,
         random_seed=random_seed,
+        idata_kwargs=idata_kwargs,
         **kwargs,
     )
 
