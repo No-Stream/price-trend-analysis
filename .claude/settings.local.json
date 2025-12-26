@@ -8,7 +8,8 @@
       "WebFetch(domain:bringatrailer.com)",
       "Bash(make:*)",
       "Bash(nb-cell:*)",
-      "Bash(nb-overview:*)"
+      "Bash(nb-overview:*)",
+      "Bash(nb-validate:*)"
     ]
   }
 }

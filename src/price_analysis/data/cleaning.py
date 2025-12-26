@@ -110,7 +110,7 @@ def validate_listing(row: pd.Series) -> ValidationResult:
 
     if pd.isna(row.get("model_year")):
         errors.append("Missing model_year")
-    elif row["model_year"] < 1999 or row["model_year"] > 2030:
+    elif row["model_year"] < 1945 or row["model_year"] > 2030:
         warnings.append(f"Unusual model_year: {row['model_year']}")
 
     if pd.isna(row.get("mileage")):
@@ -133,7 +133,7 @@ def validate_listing(row: pd.Series) -> ValidationResult:
     # Price sanity checks (911-specific)
     if pd.notna(row.get("sale_price")):
         price = row["sale_price"]
-        if price < 20000:
+        if price < 15000:
             warnings.append(f"Unusually low price: ${price:,}")
         if price > 500000 and row.get("trim") not in {"GT2 RS", "GT3 RS"}:
             warnings.append(f"Unusually high price: ${price:,}")

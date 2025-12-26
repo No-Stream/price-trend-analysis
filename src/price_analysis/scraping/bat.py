@@ -506,7 +506,7 @@ def fetch_listing_details(
     Returns:
         AuctionListing or None if parsing fails
     """
-    logger.info(f"Fetching listing: {url}")
+    logger.debug(f"Fetching listing: {url}")
 
     try:
         driver.get(url)
