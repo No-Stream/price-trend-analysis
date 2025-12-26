@@ -526,6 +526,7 @@ def fetch_auctions(
     delay: float = 1.0,
     headless: bool = True,
     completed_only: bool = True,
+    existing_urls: set[str] | None = None,
 ) -> list[AuctionListing]:
     """Scrape completed BaT auctions for a search query.
 
@@ -538,9 +539,11 @@ def fetch_auctions(
         delay: Delay between requests (seconds) - be polite!
         headless: Run browser without GUI
         completed_only: If True, filter to completed auctions at search level
+        existing_urls: Set of URLs already scraped (will be skipped).
+            Pass `set(df['listing_url'])` for incremental scraping.
 
     Returns:
-        List of AuctionListing objects
+        List of AuctionListing objects (new listings only if existing_urls provided)
     """
     driver = create_driver(headless=headless)
     listings: list[AuctionListing] = []
@@ -550,7 +553,12 @@ def fetch_auctions(
         # Get listing URLs from search using Show More pagination
         # Filter to completed auctions at the search results level to avoid unnecessary fetches
         urls = fetch_search_results(driver, query, max_clicks, delay, completed_only=completed_only)
-        logger.info(f"Found {len(urls)} unique listings to fetch")
+        logger.info(f"Found {len(urls)} unique listings from search")
+
+        # Skip already-scraped URLs for incremental scraping
+        if existing_urls:
+            urls = [u for u in urls if u not in existing_urls]
+            logger.info(f"After filtering existing: {len(urls)} new listings to fetch")
 
         # Fetch each listing's details
         for url in tqdm(urls, desc="Fetching listings", unit="listing"):
