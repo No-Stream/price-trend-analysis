@@ -229,7 +229,7 @@ def fit_model(
 
     # Check for convergence issues
     rhat_max = summary["r_hat"].max()
-    if rhat_max > 1.05:
+    if rhat_max > 1.01:
         logger.warning(f"Potential convergence issues: max R-hat = {rhat_max:.3f}")
 
     return idata
@@ -251,7 +251,7 @@ def check_diagnostics(idata: az.InferenceData) -> dict:
         if hasattr(idata, "sample_stats")
         else 0,
         "rhat_max": summary["r_hat"].max(),
-        "rhat_above_105": (summary["r_hat"] > 1.05).sum(),
+        "rhat_above_105": (summary["r_hat"] > 1.01).sum(),
         "ess_bulk_min": summary["ess_bulk"].min(),
         "ess_tail_min": summary["ess_tail"].min(),
     }
@@ -260,7 +260,7 @@ def check_diagnostics(idata: az.InferenceData) -> dict:
     issues = []
     if diagnostics["n_divergences"] > 0:
         issues.append(f"{diagnostics['n_divergences']} divergences detected")
-    if diagnostics["rhat_max"] > 1.05:
+    if diagnostics["rhat_max"] > 1.01:
         issues.append(f"High R-hat: {diagnostics['rhat_max']:.3f}")
     if diagnostics["ess_bulk_min"] < 400:
         issues.append(f"Low ESS: {diagnostics['ess_bulk_min']:.0f}")
