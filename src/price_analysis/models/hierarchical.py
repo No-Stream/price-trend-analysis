@@ -11,17 +11,36 @@ import arviz as az
 import bambi as bmb
 import numpy as np
 import pandas as pd
+import pymc as pm
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# Default weakly informative priors for random effect SDs
-# These constrain variance parameters to reasonable ranges while allowing data to dominate
+
+def _truncated_normal_upper(name, sigma, *args, dims=None, **kwargs):
+    """Truncated Normal with upper bound at 0 (for negative-only effects like age, mileage)."""
+    dist = pm.Normal.dist(mu=0, sigma=sigma)
+    return pm.Truncated(name, dist, *args, lower=None, upper=0, dims=dims, **kwargs)
+
+
+def _truncated_normal_lower(name, sigma, *args, dims=None, **kwargs):
+    """Truncated Normal with lower bound at 0 (for positive-only effects like low_mileage bonus)."""
+    dist = pm.Normal.dist(mu=0, sigma=sigma)
+    return pm.Truncated(name, dist, *args, lower=0, upper=None, dims=dims, **kwargs)
+
+
+# Default weakly informative priors
+# These constrain parameters to reasonable ranges while allowing data to dominate
 # sigma=0.5 on log-price means ~65% price difference at 1 SD
-DEFAULT_RE_PRIORS = {
+DEFAULT_PRIORS = {
+    # Random effect SDs (HalfNormal scale parameters)
     "generation_sd": 0.5,
-    "trim_sd": 0.5,
+    "trim_sd": 0.7,  # widened from 0.5 - data wants more variation
     "transmission_sd": 0.3,
     "age_slope_sd": 0.1,  # depreciation rate variation across generations
+    # Fixed effect priors (truncated Normal scale parameters)
+    "age_sigma": 0.05,  # bounded ≤0 (older = cheaper)
+    "mileage_sigma": 0.3,  # bounded ≤0 (more miles = cheaper)
+    "low_mileage_sigma": 0.2,  # bounded ≥0 (low miles = bonus)
 }
 
 
@@ -96,10 +115,15 @@ def build_model(
         use_trans_type: Whether to use grouped trans_type (manual/pdk/auto)
             instead of 4 transmission levels. Requires prepare_model_data(group_trans=True).
         priors: Optional dict of custom priors. Keys can include:
-            - 'generation_sd': HalfNormal sigma for generation intercept SD
-            - 'trim_sd': HalfNormal sigma for trim intercept SD
-            - 'transmission_sd': HalfNormal sigma for transmission intercept SD
-            - 'age_slope_sd': HalfNormal sigma for generation age slope SD
+            Random effect SDs (HalfNormal sigma):
+            - 'generation_sd': Generation intercept SD (default 0.5)
+            - 'trim_sd': Trim intercept SD (default 0.7)
+            - 'transmission_sd': Transmission intercept SD (default 0.3)
+            - 'age_slope_sd': Generation age slope SD (default 0.1)
+            Fixed effect priors (truncated Normal sigma):
+            - 'age_sigma': Age effect scale (default 0.05, bounded ≤0)
+            - 'mileage_sigma': Mileage effect scale (default 0.3, bounded ≤0)
+            - 'low_mileage_sigma': Low mileage effect scale (default 0.2, bounded ≥0)
 
     Returns:
         Bambi Model object (unfitted)
@@ -145,7 +169,7 @@ def build_model(
     logger.info(f"Model formula: {formula}")
 
     # Build priors
-    prior_config = {**DEFAULT_RE_PRIORS, **(priors or {})}
+    prior_config = {**DEFAULT_PRIORS, **(priors or {})}
     bambi_priors = _build_bambi_priors(prior_config, trim_col, trans_col, include_generation_slope)
 
     model = bmb.Model(formula, data=df, priors=bambi_priors, family="gaussian")
@@ -160,7 +184,7 @@ def _build_bambi_priors(
     """Convert config dict to Bambi prior specifications.
 
     Args:
-        config: Dict with SD values for HalfNormal priors
+        config: Dict with prior parameters (SD values for HalfNormal, sigma for truncated Normal)
         trim_col: Name of trim column ('trim' or 'trim_tier')
         trans_col: Name of transmission column ('transmission' or 'trans_type')
         include_slope: Whether model includes age slope on generation
@@ -169,6 +193,7 @@ def _build_bambi_priors(
         Dict of Bambi Prior objects
     """
     priors = {
+        # Random effects - Normal with HalfNormal SD prior
         "1|generation": bmb.Prior(
             "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["generation_sd"])
         ),
@@ -178,6 +203,11 @@ def _build_bambi_priors(
         f"1|{trans_col}": bmb.Prior(
             "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["transmission_sd"])
         ),
+        # Fixed effects - truncated Normals (equivalent to HalfNormal at mu=0)
+        # Use custom prior functions for truncation
+        "age": bmb.Prior(_truncated_normal_upper, sigma=config["age_sigma"]),
+        "mileage_scaled": bmb.Prior(_truncated_normal_upper, sigma=config["mileage_sigma"]),
+        "is_low_mileage": bmb.Prior(_truncated_normal_lower, sigma=config["low_mileage_sigma"]),
     }
 
     if include_slope:

@@ -1,6 +1,7 @@
 """Data cleaning and validation for BaT auction listings."""
 
 import logging
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -25,9 +26,12 @@ VALID_TRIMS = {
     "Carrera S",
     "Carrera 4",
     "Carrera 4S",
+    "Carrera GTS",
+    "Carrera 4 GTS",
     "Targa",
     "Targa 4",
     "Targa 4S",
+    "Targa 4 GTS",
     "Turbo",
     "Turbo S",
     "GT3",
@@ -48,6 +52,7 @@ TRANS_TO_TYPE = {
 
 # Trim grouping for sparse data scenarios
 # Groups trims into performance tiers to ensure adequate sample sizes
+# Tiers ordered by typical price: base < sport < gts < gt < rs < turbo
 TRIM_TO_TIER = {
     "Carrera": "base",
     "Carrera 4": "base",
@@ -56,6 +61,9 @@ TRIM_TO_TIER = {
     "Carrera S": "sport",
     "Carrera 4S": "sport",
     "Targa 4S": "sport",
+    "Carrera GTS": "gts",
+    "Carrera 4 GTS": "gts",
+    "Targa 4 GTS": "gts",
     "GT3": "gt",
     "GT3 Touring": "gt",
     "GT3 RS": "rs",
@@ -82,6 +90,34 @@ SPECIAL_COLORS = {
     "gentian blue",
 }
 
+# Trim patterns for parsing from title_raw (order matters - more specific first)
+TRIM_PATTERNS: list[tuple[str, str]] = [
+    (r"\bGT2\s*RS\b", "GT2 RS"),
+    (r"\bGT3\s*RS\b", "GT3 RS"),
+    (r"\bGT3\s*Touring\b", "GT3 Touring"),
+    (r"\bGT3\b", "GT3"),
+    (r"\bTurbo\s*S\b", "Turbo S"),
+    (r"\bTurbo\b", "Turbo"),
+    (r"\bTarga\s*4\s*GTS\b", "Targa 4 GTS"),
+    (r"\bTarga\s*4S\b", "Targa 4S"),
+    (r"\bTarga\s*4\b", "Targa 4"),
+    (r"\bTarga\b", "Targa"),
+    (r"\bCarrera\s*4\s*GTS\b", "Carrera 4 GTS"),
+    (r"\bCarrera\s*GTS\b", "Carrera GTS"),
+    (r"\bCarrera\s*4S\b", "Carrera 4S"),
+    (r"\bCarrera\s*S\b", "Carrera S"),
+    (r"\bCarrera\s*4\b", "Carrera 4"),
+    (r"\bCarrera\b", "Carrera"),
+]
+
+# Body style patterns for parsing from title_raw (order matters)
+BODY_PATTERNS: list[tuple[str, str]] = [
+    (r"\bSpeedster\b", "speedster"),
+    (r"\bCab(riolet)?\b", "cabriolet"),
+    (r"\bTarga\b", "targa"),
+    (r"\bCoupe\b", "coupe"),
+]
+
 
 @dataclass
 class ValidationResult:
@@ -90,6 +126,44 @@ class ValidationResult:
     is_valid: bool
     warnings: list[str]
     errors: list[str]
+
+
+def parse_trim(title: str) -> str | None:
+    """Parse trim from title_raw using regex patterns.
+
+    Uses ordered patterns to match most specific trim first (e.g., GT3 RS before GT3).
+    Captures GTS variants that scraper may have missed.
+
+    Args:
+        title: Raw listing title
+
+    Returns:
+        Trim string (e.g., "Carrera GTS") or None if not found
+    """
+    if not title:
+        return None
+    for pattern, trim in TRIM_PATTERNS:
+        if re.search(pattern, title, re.IGNORECASE):
+            return trim
+    return None
+
+
+def parse_body_style(title: str) -> str:
+    """Parse body style from title_raw.
+
+    Args:
+        title: Raw listing title
+
+    Returns:
+        Body style: 'coupe', 'cabriolet', 'targa', or 'speedster'
+        Defaults to 'coupe' for fixed-roof cars that omit body style (GT3s, Turbos)
+    """
+    if not title:
+        return "coupe"
+    for pattern, body in BODY_PATTERNS:
+        if re.search(pattern, title, re.IGNORECASE):
+            return body
+    return "coupe"
 
 
 def validate_listing(row: pd.Series) -> ValidationResult:
@@ -216,6 +290,13 @@ def clean_listings(df: pd.DataFrame, drop_invalid: bool = False) -> pd.DataFrame
 
     # Color categorization
     df["color_category"] = df["color"].apply(categorize_color)
+
+    # Re-parse trim from title_raw (captures GTS variants that scraper missed)
+    if "title_raw" in df.columns:
+        df["trim"] = df["title_raw"].apply(parse_trim)
+        df["body_style"] = df["title_raw"].apply(parse_body_style)
+        logger.info(f"Parsed trim: {df['trim'].value_counts().to_dict()}")
+        logger.info(f"Parsed body_style: {df['body_style'].value_counts().to_dict()}")
 
     # Log-transformed price (for modeling)
     df["log_price"] = np.log(df["sale_price"].replace(0, np.nan))
@@ -348,7 +429,7 @@ def prepare_model_data(
         )
 
     # Convert categoricals to proper type for Bambi
-    cat_cols = ["generation", "trim", "transmission", "color_category"]
+    cat_cols = ["generation", "trim", "transmission", "color_category", "body_style"]
     if group_trims:
         cat_cols.append("trim_tier")
     if group_trans:
