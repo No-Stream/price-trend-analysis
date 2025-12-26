@@ -90,6 +90,19 @@ TRANSMISSION_PATTERNS: list[tuple[str, str]] = [
     (r"\bAutomatic\b", "Automatic"),
 ]
 
+# Keywords indicating non-car listings (parts, accessories, literature)
+# Be ULTRA conservative - only include terms that NEVER appear in car listings
+# When in doubt, leave it out - we filter by price downstream ($10k floor)
+NON_CAR_KEYWORDS: list[str] = [
+    "literature",
+    "automobilia",
+    "transaxle",  # Parts term - cars say "transmission" not "transaxle"
+]
+
+# No title patterns - too risky for false positives
+# e.g., "center-lock wheels" could describe a GT3 RS that HAS center-lock wheels
+NON_CAR_TITLE_PATTERNS: list[str] = []
+
 
 @dataclass
 class AuctionListing:
@@ -210,10 +223,35 @@ def parse_year(title: str) -> int | None:
     Returns:
         Model year as int or None
     """
-    match = re.search(r"\b(19[89]\d|20[0-2]\d)\b", title)
+    # Match years 1960-2029 (covers all 911 generations from original to future)
+    match = re.search(r"\b(19[6-9]\d|20[0-2]\d)\b", title)
     if match:
         return int(match.group(1))
     return None
+
+
+def is_non_car_listing(card_text: str, title: str = "") -> bool:
+    """Check if listing text indicates a non-car item (parts, wheels, etc.).
+
+    Args:
+        card_text: Full card text from search results
+        title: Listing title (if available separately)
+
+    Returns:
+        True if this appears to be a non-car listing
+    """
+    text_lower = card_text.lower()
+    title_lower = title.lower() if title else text_lower
+
+    # Check for definitive non-car keywords (these rarely appear in car listings)
+    if any(keyword in text_lower for keyword in NON_CAR_KEYWORDS):
+        return True
+
+    # Check title-specific patterns (wheels, parts, etc.)
+    if any(pattern in title_lower for pattern in NON_CAR_TITLE_PATTERNS):
+        return True
+
+    return False
 
 
 def parse_price(price_text: str) -> int | None:
@@ -303,6 +341,7 @@ def fetch_search_results(
     query: str,
     max_clicks: int = 50,
     delay: float = 2.5,
+    completed_only: bool = True,
 ) -> list[str]:
     """Fetch listing URLs from BaT search results using Show More button.
 
@@ -314,6 +353,7 @@ def fetch_search_results(
         query: Search query (e.g., "Porsche 911")
         max_clicks: Maximum times to click "Show More" button
         delay: Delay between clicks (seconds)
+        completed_only: If True, only return URLs for completed auctions (skip "Bid to" listings)
 
     Returns:
         List of listing URLs
@@ -349,18 +389,85 @@ def fetch_search_results(
             logger.info("No more 'Show More' button available - reached end of results")
             break
 
-    # Extract all listing URLs from the page
+    # Extract listing URLs from the page, optionally filtering to completed auctions
     soup = BeautifulSoup(driver.page_source, "html.parser")
     listing_urls: set[str] = set()
+    skipped_active = 0
+    skipped_non_car = 0
 
-    # Find all listing links
-    for link in soup.select('a[href*="/listing/"]'):
-        href = link.get("href", "")
-        if href and "/listing/" in href:
-            if not href.startswith("http"):
-                href = f"https://bringatrailer.com{href}"
+    # Try to find the completed auctions container first (more reliable filtering)
+    completed_container = soup.select_one("#auctions-completed-container, .auctions-completed")
+    search_scope = completed_container if completed_container else soup
+    if completed_container:
+        logger.info("Found completed auctions container - searching within it")
+    else:
+        logger.info("No completed container found - searching full page")
+
+    # Find listing cards and check their status
+    # BaT uses different elements for completed vs active auctions:
+    # - Completed: <a class="listing-card bg-white-transparent"> (anchor tag)
+    # - Active: <div class="listing-card listing-card-separate"> (div tag)
+    cards = search_scope.select("a.listing-card, div.listing-card, li.listing-card, article.listing-card")
+    logger.info(f"Found {len(cards)} listing cards on page")
+
+    for card in cards:
+        # Get the listing URL - for <a> cards it's the href, for <div> cards we find nested <a>
+        if card.name == "a" and card.get("href"):
+            href = card.get("href", "")
+        else:
+            link = card.select_one('a[href*="/listing/"]')
+            if not link:
+                continue
+            href = link.get("href", "")
+        if not href or "/listing/" not in href:
+            continue
+
+        if not href.startswith("http"):
+            href = f"https://bringatrailer.com{href}"
+
+        card_text = card.get_text()
+
+        # Try to extract title from card for more accurate filtering
+        title_elem = card.select_one("h3, .listing-card-title, a[href*='/listing/']")
+        card_title = title_elem.get_text(strip=True) if title_elem else ""
+
+        # Skip non-car listings (wheels, parts, literature, etc.)
+        if is_non_car_listing(card_text, card_title):
+            skipped_non_car += 1
+            logger.debug(f"Filtered non-car listing: {card_title[:80] if card_title else href}")
+            continue
+
+        if completed_only:
+            # Check if this is a completed auction by looking for "Sold for" text
+            # Active auctions have countdown timers and "Bid:" labels (not "Bid to")
+            card_text_lower = card_text.lower()
+            if "sold for" in card_text_lower:
+                listing_urls.add(href)
+            elif "countdown" in str(card) or "bid:" in card_text_lower or "bidding-bid" in str(card):
+                # Active auction - has countdown timer or current bid display
+                skipped_active += 1
+            else:
+                # Unknown status - include to be safe
+                listing_urls.add(href)
+        else:
             listing_urls.add(href)
 
+    # Fallback: if card-based extraction found nothing, try simple link extraction
+    if not listing_urls:
+        logger.warning("Card-based extraction found no URLs, falling back to link extraction")
+        all_links = soup.select('a[href*="/listing/"]')
+        logger.warning(f"Fallback found {len(all_links)} total listing links")
+        for link in all_links:
+            href = link.get("href", "")
+            if href and "/listing/" in href:
+                if not href.startswith("http"):
+                    href = f"https://bringatrailer.com{href}"
+                listing_urls.add(href)
+
+    if skipped_non_car > 0:
+        logger.info(f"Filtered out {skipped_non_car} non-car listings (parts/wheels/etc)")
+    if skipped_active > 0:
+        logger.info(f"Filtered out {skipped_active} active auctions from search results")
     logger.info(f"Found {len(listing_urls)} unique listings after {clicks} 'Show More' clicks")
     return list(listing_urls)
 
@@ -498,7 +605,7 @@ def fetch_auctions(
         max_clicks: Maximum times to click "Show More" button
         delay: Delay between requests (seconds) - be polite!
         headless: Run browser without GUI
-        completed_only: If True, skip active auctions (no sold price)
+        completed_only: If True, filter to completed auctions at search level
 
     Returns:
         List of AuctionListing objects
@@ -509,27 +616,29 @@ def fetch_auctions(
 
     try:
         # Get listing URLs from search using Show More pagination
-        urls = fetch_search_results(driver, query, max_clicks, delay)
+        # Filter to completed auctions at the search results level to avoid unnecessary fetches
+        urls = fetch_search_results(driver, query, max_clicks, delay, completed_only=completed_only)
         logger.info(f"Found {len(urls)} unique listings to fetch")
 
         # Fetch each listing's details
         for i, url in enumerate(urls):
             logger.info(f"Processing listing {i + 1}/{len(urls)}")
             listing = fetch_listing_details(driver, url, delay)
-            if listing:
-                # Filter out active auctions if requested
-                if completed_only and listing.sale_price is None:
-                    skipped_active += 1
-                    logger.debug(f"Skipped active auction: {listing.title_raw}")
-                else:
-                    listings.append(listing)
+            if listing is None:
+                logger.warning(f"Failed to parse listing: {url}")
+            elif completed_only and listing.sale_price is None:
+                # Secondary check: some listings may slip through if card text was unclear
+                skipped_active += 1
+                logger.info(f"Skipped (no price - likely active): {listing.title_raw[:60]}...")
+            else:
+                listings.append(listing)
             time.sleep(delay)  # Extra politeness
 
     finally:
         driver.quit()
 
     if skipped_active > 0:
-        logger.info(f"Skipped {skipped_active} active auctions (no sold price)")
+        logger.info(f"Skipped {skipped_active} active auctions in secondary filter")
     logger.info(f"Successfully scraped {len(listings)} completed listings")
     return listings
 
@@ -573,22 +682,39 @@ class DataQualityError(Exception):
 def validate_scraped_data(
     df,
     max_price_missing_pct: float = 0.10,
+    min_price: int = 10000,
     required_cols: list[str] | None = None,
-) -> None:
-    """Validate scraped data quality.
+):
+    """Validate and filter scraped data quality.
 
+    Filters out listings below min_price (likely parts/salvage), then validates.
     Raises DataQualityError if checks fail.
 
     Args:
         df: DataFrame from listings_to_dataframe()
         max_price_missing_pct: Maximum allowed missing rate for sale_price (default 10%)
+        min_price: Minimum price to keep (default $10,000 - filters parts/salvage)
         required_cols: Columns that cannot be 100% missing (default: all columns)
+
+    Returns:
+        Filtered DataFrame with low-price listings removed
 
     Raises:
         DataQualityError: If any validation check fails
     """
     if len(df) == 0:
         raise DataQualityError("No listings scraped - DataFrame is empty")
+
+    # Filter out listings below min_price (likely parts, salvage, or non-cars)
+    if "sale_price" in df.columns and min_price > 0:
+        low_price_mask = df["sale_price"] < min_price
+        n_filtered = low_price_mask.sum()
+        if n_filtered > 0:
+            logger.info(f"Filtered {n_filtered} listings below ${min_price:,} (likely parts/salvage)")
+            df = df[~low_price_mask].copy()
+
+    if len(df) == 0:
+        raise DataQualityError(f"No listings remaining after filtering below ${min_price:,}")
 
     errors: list[str] = []
 
@@ -614,3 +740,5 @@ def validate_scraped_data(
     logger.info(
         f"Data quality checks passed: {len(df)} listings, {df['sale_price'].notna().sum()} with prices"
     )
+
+    return df

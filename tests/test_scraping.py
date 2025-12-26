@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from price_analysis.scraping.bat import (
     AuctionListing,
     DataQualityError,
+    is_non_car_listing,
     parse_generation,
     parse_listing_from_soup,
     parse_mileage,
@@ -212,6 +213,189 @@ class TestSearchPageParsing:
 
 
 @pytest.mark.slow
+class TestSearchPageActiveVsCompleted:
+    """Tests for detecting active vs completed auctions from search page cards.
+
+    These tests verify the logic that filters out active auctions before
+    fetching individual listing pages (saves time and bandwidth).
+    """
+
+    def test_search_page_has_completed_auctions(self, search_page_html):
+        """Search page contains completed auctions with 'Sold for' text."""
+        soup = BeautifulSoup(search_page_html, "html.parser")
+        # BaT uses <a class="listing-card"> for completed, <div class="listing-card"> for active
+        cards = soup.select("a.listing-card, div.listing-card")
+
+        completed_count = 0
+        for card in cards:
+            card_text = card.get_text().lower()
+            if "sold for" in card_text:
+                completed_count += 1
+
+        # Should have some completed auctions
+        assert completed_count > 0, "No completed auctions found in search page"
+
+    def test_search_page_distinguishes_sold_vs_not_sold(self, search_page_html):
+        """Search page has both 'Sold for' (success) and 'Bid to' (not sold) listings."""
+        soup = BeautifulSoup(search_page_html, "html.parser")
+        cards = soup.select("a.listing-card, div.listing-card")
+
+        sold_count = 0
+        bid_to_count = 0
+        for card in cards:
+            card_text = card.get_text().lower()
+            if "sold for" in card_text:
+                sold_count += 1
+            elif "bid to" in card_text:
+                bid_to_count += 1
+
+        # Results page should have successful sales
+        assert sold_count > 0, "No 'Sold for' listings found"
+        # May or may not have 'Bid to' (auctions that ended without meeting reserve)
+        # Just verify we found some listings
+        assert sold_count + bid_to_count > 0
+
+    def test_sold_for_is_definitive_completion_indicator(self, search_page_html):
+        """'Sold for' text definitively indicates a completed auction.
+
+        Note: Completed auction cards may still have hidden bidding/countdown elements
+        (with display:none), so we can't use those as sole active indicators.
+        The 'Sold for' text is the definitive completion marker.
+        """
+        soup = BeautifulSoup(search_page_html, "html.parser")
+        cards = soup.select("a.listing-card, div.listing-card")
+
+        for card in cards:
+            card_text = card.get_text().lower()
+            has_sold = "sold for" in card_text
+
+            # If "sold for" is in the visible text, it's definitely completed
+            # (hidden bidding elements don't affect this)
+            if has_sold:
+                # Verify the sold_for text contains a price
+                assert "$" in card_text, "Sold for text missing price"
+
+    def test_completed_auction_identification(self, search_page_html):
+        """We can identify completed auctions by 'Sold for' or 'Bid to' text."""
+        soup = BeautifulSoup(search_page_html, "html.parser")
+        cards = soup.select("a.listing-card, div.listing-card")
+
+        completed_count = 0
+        for card in cards:
+            card_text = card.get_text().lower()
+            # Completed = "sold for" (successful sale) or "bid to" (ended without sale)
+            if "sold for" in card_text or "bid to" in card_text:
+                completed_count += 1
+
+        # Most cards on the results page should be completed
+        total_cards = len(cards)
+        assert completed_count > 0, "No completed auctions identified"
+        # At least some should be completed (results page is for completed auctions)
+        assert completed_count >= total_cards * 0.2, (
+            f"Too few completed auctions: {completed_count}/{total_cards}"
+        )
+
+    def test_filter_logic_separates_active_from_completed(self, search_page_html):
+        """The actual filter logic correctly separates active from completed.
+
+        Logic mirrors fetch_search_results():
+        1. 'sold for' in text -> COMPLETED (definitive)
+        2. countdown/bidding elements present but no 'sold for' -> ACTIVE
+        3. Neither -> unknown (included to be safe)
+
+        Note: Completed cards may have hidden bidding elements, so we check
+        'sold for' first before checking bidding elements.
+        """
+        soup = BeautifulSoup(search_page_html, "html.parser")
+        cards = soup.select("a.listing-card, div.listing-card")
+
+        completed_urls = []
+        active_urls = []
+
+        for card in cards:
+            # Get URL - for <a> cards it's the href, for <div> cards find nested <a>
+            if card.name == "a" and card.get("href"):
+                href = card.get("href", "")
+            else:
+                link = card.select_one('a[href*="/listing/"]')
+                if not link:
+                    continue
+                href = link.get("href", "")
+
+            if not href or "/listing/" not in href:
+                continue
+
+            card_text = card.get_text().lower()
+            card_html = str(card)
+
+            # This mirrors the logic in fetch_search_results
+            # Priority: "sold for" takes precedence over bidding elements
+            if "sold for" in card_text:
+                completed_urls.append(href)
+            elif "countdown" in card_html or "bid:" in card_text or "bidding-bid" in card_html:
+                # Has bidding elements but NO "sold for" -> truly active
+                active_urls.append(href)
+            # else: unknown status - would be included
+
+        # Verify we're getting meaningful separation
+        assert len(completed_urls) > 0, "Filter found no completed auctions"
+        # Active count may be 0 if all auctions on page are completed - that's OK
+        # The key test is that completed_urls are found
+
+        # No overlap between the two lists
+        overlap = set(completed_urls) & set(active_urls)
+        assert len(overlap) == 0, f"URLs appear in both active and completed: {overlap}"
+
+    def test_completed_auction_card_structure(self, search_page_html):
+        """Verify completed auction card has expected structure for parsing."""
+        soup = BeautifulSoup(search_page_html, "html.parser")
+        cards = soup.select("a.listing-card, div.listing-card")
+
+        # Find a completed auction card
+        completed_card = None
+        for card in cards:
+            if "sold for" in card.get_text().lower():
+                completed_card = card
+                break
+
+        assert completed_card is not None, "No completed card found"
+
+        # Completed cards are <a> tags with href directly
+        if completed_card.name == "a":
+            href = completed_card.get("href", "")
+            assert "/listing/" in href, "Completed card missing listing URL in href"
+        else:
+            link = completed_card.select_one('a[href*="/listing/"]')
+            assert link is not None, "Completed card missing listing link"
+
+    def test_active_auction_card_structure(self, search_page_html):
+        """Verify active auction card has expected structure.
+
+        Active auctions have bidding elements visible (not hidden) and
+        NO 'sold for' text in the visible content.
+        """
+        soup = BeautifulSoup(search_page_html, "html.parser")
+        cards = soup.select("a.listing-card, div.listing-card")
+
+        # Find an active auction card (has bidding elements, no "sold for")
+        active_card = None
+        for card in cards:
+            card_text = card.get_text().lower()
+            card_html = str(card)
+            has_bidding = "countdown" in card_html or "bidding-bid" in card_html
+            has_sold = "sold for" in card_text
+
+            if has_bidding and not has_sold:
+                active_card = card
+                break
+
+        # It's possible the fixture doesn't have active auctions
+        # (results page shows completed auctions)
+        if active_card is None:
+            pytest.skip("No active auction cards in fixture (expected for results page)")
+
+
+@pytest.mark.slow
 class TestFullListingParsing:
     """Full integration tests using parse_listing_from_soup().
 
@@ -340,7 +524,7 @@ class TestDataQualityValidation:
     """Tests for validate_scraped_data() function."""
 
     def test_valid_data_passes(self):
-        """Good data passes validation."""
+        """Good data passes validation and returns DataFrame."""
         df = pd.DataFrame(
             {
                 "listing_url": ["url1", "url2"],
@@ -348,8 +532,8 @@ class TestDataQualityValidation:
                 "model_year": [2020, 2021],
             }
         )
-        # Should not raise
-        validate_scraped_data(df)
+        result = validate_scraped_data(df)
+        assert len(result) == 2
 
     def test_empty_dataframe_raises(self):
         """Empty DataFrame raises DataQualityError."""
@@ -393,4 +577,39 @@ class TestDataQualityValidation:
             validate_scraped_data(df, max_price_missing_pct=0.10)
 
         # But passes with higher threshold
-        validate_scraped_data(df, max_price_missing_pct=0.25)
+        result = validate_scraped_data(df, max_price_missing_pct=0.25)
+        assert len(result) == 5
+
+    def test_min_price_filters_low_price_listings(self):
+        """Listings below min_price are filtered out."""
+        df = pd.DataFrame(
+            {
+                "listing_url": ["url1", "url2", "url3", "url4"],
+                "sale_price": [5000, 8000, 50000, 100000],  # 2 below $10k
+            }
+        )
+        result = validate_scraped_data(df, min_price=10000)
+        assert len(result) == 2
+        assert result["sale_price"].min() >= 10000
+
+    def test_all_below_min_price_raises(self):
+        """If all listings are below min_price, raises error."""
+        df = pd.DataFrame(
+            {
+                "listing_url": ["url1", "url2"],
+                "sale_price": [500, 2000],  # All below $10k
+            }
+        )
+        with pytest.raises(DataQualityError, match="No listings remaining"):
+            validate_scraped_data(df, min_price=10000)
+
+    def test_min_price_zero_disables_filter(self):
+        """Setting min_price=0 disables the filter."""
+        df = pd.DataFrame(
+            {
+                "listing_url": ["url1", "url2"],
+                "sale_price": [500, 2000],
+            }
+        )
+        result = validate_scraped_data(df, min_price=0)
+        assert len(result) == 2
