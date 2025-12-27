@@ -121,9 +121,7 @@ def build_spline_model(
     return model
 
 
-def _build_spline_priors(
-    config: dict[str, float], include_color: bool = False
-) -> dict[str, Any]:
+def _build_spline_priors(config: dict[str, float], include_color: bool = False) -> dict[str, Any]:
     """Convert config dict to Bambi prior specifications for spline model."""
     priors = {
         "1|generation": bmb.Prior(
@@ -359,18 +357,10 @@ def predict_spline_price(
         {
             "age": [age],
             "log_mileage": [log_mileage],
-            "generation": pd.Categorical(
-                [generation], categories=df["generation"].cat.categories
-            ),
-            "trim_tier": pd.Categorical(
-                [trim_tier], categories=df["trim_tier"].cat.categories
-            ),
-            "trans_type": pd.Categorical(
-                [trans_type], categories=df["trans_type"].cat.categories
-            ),
-            "body_style": pd.Categorical(
-                [body_style], categories=df["body_style"].cat.categories
-            ),
+            "generation": pd.Categorical([generation], categories=df["generation"].cat.categories),
+            "trim_tier": pd.Categorical([trim_tier], categories=df["trim_tier"].cat.categories),
+            "trans_type": pd.Categorical([trans_type], categories=df["trans_type"].cat.categories),
+            "body_style": pd.Categorical([body_style], categories=df["body_style"].cat.categories),
         }
     )
 
