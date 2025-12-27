@@ -26,10 +26,11 @@ ENV/
 *.swo
 
 # Data (keep structure, ignore large files)
-data/raw/*.parquet
-data/raw/*.csv
-data/processed/*.parquet
-data/processed/*.csv
+# data/raw/*.parquet
+# data/raw/*.csv
+# data/processed/*.parquet
+# data/processed/*.csv
+# Keep these for others' use.
 
 # Scratch notes
 scratch/
