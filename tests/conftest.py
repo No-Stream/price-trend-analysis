@@ -205,8 +205,8 @@ def minimal_model_data() -> pd.DataFrame:
 def minimal_spline_model_data() -> pd.DataFrame:
     """Minimal dataset for spline model smoke testing.
 
-    Similar to minimal_model_data but includes trim_tier and trans_type
-    columns required by spline model.
+    Includes log_mileage_scaled, trim_tier, trans_type columns
+    required by spline model.
     """
     import numpy as np
 
@@ -221,8 +221,7 @@ def minimal_spline_model_data() -> pd.DataFrame:
     data = {
         "log_price": np.random.normal(11.7, 0.3, n),
         "age": np.random.randint(1, 15, n),
-        "mileage_scaled": np.random.normal(0, 1, n),
-        "is_low_mileage": np.random.choice([0, 1], n, p=[0.85, 0.15]),
+        "log_mileage": np.random.normal(10.0, 1.0, n),  # ~exp(10) = 22k miles typical
         "sale_year": np.random.choice([2024, 2025], n),
         "generation": pd.Categorical(np.random.choice(generations, n)),
         "trim_tier": pd.Categorical(np.random.choice(trim_tiers, n)),

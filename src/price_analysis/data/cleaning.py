@@ -311,7 +311,16 @@ def clean_listings(df: pd.DataFrame, drop_invalid: bool = False) -> pd.DataFrame
     mileage_std = df["mileage"].std()
     df["mileage_scaled"] = (df["mileage"] - mileage_mean) / mileage_std
 
+    # Log-mileage z-score scaling (for spline models)
+    # Log transform captures diminishing marginal effect of additional miles
+    # Add 1 to handle zero-mileage cars
+    df["log_mileage"] = np.log(df["mileage"] + 1)
+    log_mileage_mean = df["log_mileage"].mean()
+    log_mileage_std = df["log_mileage"].std()
+    df["log_mileage_scaled"] = (df["log_mileage"] - log_mileage_mean) / log_mileage_std
+
     # Low mileage flag for collector car premium (<10k miles)
+    # Used by linear models; spline models use log_mileage_scaled instead
     # NA mileage treated as not low-mileage (will be filtered out by model prep anyway)
     df["is_low_mileage"] = (df["mileage"] < 10000).fillna(False).astype(int)
 

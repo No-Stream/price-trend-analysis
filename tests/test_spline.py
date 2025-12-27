@@ -14,6 +14,7 @@ from price_analysis.models.spline import (
     fit_spline_model,
     plot_spline_effect,
     plot_spline_effects_grid,
+    predict_spline_price,
 )
 
 
@@ -26,7 +27,7 @@ class TestSplineModelSmoke:
         assert model is not None
         assert model.formula is not None
         assert "bs(age" in str(model.formula)
-        assert "bs(mileage_scaled" in str(model.formula)
+        assert "bs(log_mileage" in str(model.formula)
 
     def test_spline_model_builds_custom_df(self, minimal_spline_model_data: pd.DataFrame):
         """Spline model builds with custom degrees of freedom."""
@@ -151,8 +152,112 @@ class TestComparisonUtilities:
 
     def test_get_residuals_missing_cols_raises(self, minimal_spline_model_data: pd.DataFrame):
         """get_residuals raises on missing required columns."""
-        model = build_spline_model(minimal_spline_model_data)
         bad_df = minimal_spline_model_data.drop(columns=["log_price"])
 
         with pytest.raises(ValueError, match="missing required columns"):
-            get_residuals(model, None, bad_df)
+            get_residuals(None, None, bad_df)
+
+
+class TestSplineModelWithColor:
+    """Test spline model with color_category."""
+
+    def test_model_builds_with_color(self, minimal_spline_model_data: pd.DataFrame):
+        """Spline model builds with include_color=True."""
+        df_with_color = minimal_spline_model_data.copy()
+        df_with_color["color_category"] = pd.Categorical(
+            ["standard", "special", "PTS", "unknown"] * (len(df_with_color) // 4 + 1)
+        )[: len(df_with_color)]
+
+        model = build_spline_model(df_with_color, include_color=True)
+
+        assert model is not None
+        assert "color_category" in str(model.formula)
+
+    def test_model_requires_color_column_when_enabled(
+        self, minimal_spline_model_data: pd.DataFrame
+    ):
+        """Model building fails without color_category when include_color=True."""
+        with pytest.raises(ValueError, match="Missing required columns.*color_category"):
+            build_spline_model(minimal_spline_model_data, include_color=True)
+
+
+class TestPredictSplinePrice:
+    """Test predict_spline_price function."""
+
+    @pytest.mark.slow
+    def test_predict_returns_expected_structure(self, minimal_spline_model_data: pd.DataFrame):
+        """predict_spline_price returns dict with expected keys."""
+        model = build_spline_model(minimal_spline_model_data, include_sale_year=False)
+        idata = fit_spline_model(model, draws=10, tune=10, chains=1)
+
+        pred = predict_spline_price(
+            model=model,
+            idata=idata,
+            df=minimal_spline_model_data,
+            generation="992.1",
+            trim_tier="sport",
+            trans_type="pdk",
+            body_style="coupe",
+            model_year=2022,
+            mileage=15000,
+            sale_year=2025,
+            include_sale_year=False,
+        )
+
+        assert "config" in pred
+        assert "price" in pred
+        assert "log_price" in pred
+        assert "samples" in pred
+
+        assert pred["config"]["generation"] == "992.1"
+        assert pred["config"]["mileage"] == 15000
+        assert pred["config"]["age"] == 3
+
+        assert "median" in pred["price"]
+        assert "ci_80" in pred["price"]
+        assert "ci_95" in pred["price"]
+        assert pred["price"]["median"] > 0
+
+    @pytest.mark.slow
+    def test_predict_low_mileage(self, minimal_spline_model_data: pd.DataFrame):
+        """Prediction works with very low mileage (edge case)."""
+        model = build_spline_model(minimal_spline_model_data, include_sale_year=False)
+        idata = fit_spline_model(model, draws=10, tune=10, chains=1)
+
+        pred = predict_spline_price(
+            model=model,
+            idata=idata,
+            df=minimal_spline_model_data,
+            generation="992.1",
+            trim_tier="sport",
+            trans_type="manual",
+            body_style="coupe",
+            model_year=2024,
+            mileage=100,
+            sale_year=2025,
+            include_sale_year=False,
+        )
+
+        assert pred["price"]["median"] > 0
+
+    @pytest.mark.slow
+    def test_predict_zero_mileage(self, minimal_spline_model_data: pd.DataFrame):
+        """Prediction handles zero mileage without error."""
+        model = build_spline_model(minimal_spline_model_data, include_sale_year=False)
+        idata = fit_spline_model(model, draws=10, tune=10, chains=1)
+
+        pred = predict_spline_price(
+            model=model,
+            idata=idata,
+            df=minimal_spline_model_data,
+            generation="992.1",
+            trim_tier="gt",
+            trans_type="manual",
+            body_style="coupe",
+            model_year=2025,
+            mileage=0,
+            sale_year=2025,
+            include_sale_year=False,
+        )
+
+        assert pred["price"]["median"] > 0

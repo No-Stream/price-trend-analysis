@@ -80,7 +80,7 @@ def get_residuals(
     """
     if df.empty:
         raise ValueError("DataFrame must not be empty")
-    required_cols = {"log_price", "age", "mileage_scaled"}
+    required_cols = {"log_price", "age"}
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(f"DataFrame missing required columns: {missing}")
@@ -101,9 +101,14 @@ def get_residuals(
             "residual_mean": df["log_price"].values - predicted_mean,
             "residual_median": df["log_price"].values - predicted_median,
             "age": df["age"].values,
-            "mileage_scaled": df["mileage_scaled"].values,
         }
     )
+
+    # Include mileage columns if available
+    if "mileage_scaled" in df.columns:
+        result["mileage_scaled"] = df["mileage_scaled"].values
+    if "log_mileage" in df.columns:
+        result["log_mileage"] = df["log_mileage"].values
 
     return result
 
@@ -129,11 +134,18 @@ def plot_residuals(
     if vs == "fitted":
         x = residuals["predicted_mean"]
         xlabel = "Fitted (posterior mean)"
-    elif vs in ("age", "mileage_scaled"):
+    elif vs in ("age", "mileage_scaled", "log_mileage"):
         x = residuals[vs]
-        xlabel = "Age (years)" if vs == "age" else "Mileage (z-scored)"
+        if vs == "age":
+            xlabel = "Age (years)"
+        elif vs == "mileage_scaled":
+            xlabel = "Mileage (z-scored)"
+        else:
+            xlabel = "log(Mileage)"
     else:
-        raise ValueError(f"vs must be 'fitted', 'age', or 'mileage_scaled', got '{vs}'")
+        raise ValueError(
+            f"vs must be 'fitted', 'age', 'mileage_scaled', or 'log_mileage', got '{vs}'"
+        )
 
     y = residuals["residual_mean"]
 
@@ -209,14 +221,12 @@ def plot_residual_diagnostics(
 
     fig, axes = plt.subplots(3, n_models, figsize=figsize, squeeze=False)
 
+    vs_labels = ["fitted", "age", "log_mileage"]
     for col, name in enumerate(model_names):
         residuals = residuals_dict[name]
-        plot_residuals(residuals, ax=axes[0, col], vs="fitted")
-        plot_residuals(residuals, ax=axes[1, col], vs="age")
-        plot_residuals(residuals, ax=axes[2, col], vs="mileage_scaled")
-
-        for row in range(3):
-            axes[row, col].set_title(f"{name}: {axes[row, col].get_title().split(': ')[1]}")
+        for row, vs in enumerate(vs_labels):
+            plot_residuals(residuals, ax=axes[row, col], vs=vs)
+            axes[row, col].set_title(f"{name}: Residuals vs {vs}")
 
     fig.tight_layout()
     return fig
