@@ -73,7 +73,8 @@ TRIM_TO_TIER = {
 }
 
 # Special colors that command premiums
-PTS_KEYWORDS = ["pts", "paint to sample", "special order"]
+# Note: "-to-sample" catches truncated "Paint-to-Sample" from HTML parsing
+PTS_KEYWORDS = ["pts", "paint to sample", "special order", "-to-sample", "-to sample"]
 SPECIAL_COLORS = {
     "gt silver",
     "miami blue",
@@ -164,6 +165,32 @@ def parse_body_style(title: str) -> str:
         if re.search(pattern, title, re.IGNORECASE):
             return body
     return "coupe"
+
+
+def normalize_color(color: str | None) -> str | None:
+    """Normalize color string by removing artifacts from HTML parsing.
+
+    Handles:
+    - Suffix artifacts: "w/Graphics", "w/Stripe", "& Black", etc.
+    - Multiple spaces collapsed to single space
+
+    Args:
+        color: Raw color string from listing
+
+    Returns:
+        Normalized color string, or None if input was None/NA
+    """
+    if color is None or pd.isna(color):
+        return None
+
+    # Strip suffix patterns that add noise
+    color = re.sub(r"\s+w/.*$", "", color, flags=re.IGNORECASE)
+    color = re.sub(r"\s+&.*$", "", color)
+
+    # Collapse multiple spaces
+    color = re.sub(r"\s+", " ", color)
+
+    return color.strip() or None
 
 
 def validate_listing(row: pd.Series) -> ValidationResult:
@@ -288,8 +315,9 @@ def clean_listings(df: pd.DataFrame, drop_invalid: bool = False) -> pd.DataFrame
     # NA mileage treated as not low-mileage (will be filtered out by model prep anyway)
     df["is_low_mileage"] = (df["mileage"] < 10000).fillna(False).astype(int)
 
-    # Color categorization
-    df["color_category"] = df["color"].apply(categorize_color)
+    # Color normalization and categorization
+    df["color_normalized"] = df["color"].apply(normalize_color)
+    df["color_category"] = df["color_normalized"].apply(categorize_color)
 
     # Re-parse trim from title_raw (captures GTS variants that scraper missed)
     if "title_raw" in df.columns:

@@ -37,6 +37,7 @@ DEFAULT_PRIORS = {
     "trim_sd": 0.7,  # widened from 0.5 - data wants more variation
     "transmission_sd": 0.3,
     "body_style_sd": 0.3,  # coupe/cab/targa/speedster - expect modest variation
+    "color_category_sd": 0.3,  # standard/special/PTS/unknown - expect modest PTS premium
     "age_slope_sd": 0.1,  # depreciation rate variation across generations
     # Fixed effect priors (truncated Normal scale parameters)
     "age_sigma": 0.05,  # bounded ≤0 (older = cheaper)
@@ -169,12 +170,11 @@ def build_model(
     if include_sale_year:
         formula_parts.insert(3, "sale_year")
 
-    if include_color and "color_category" in df.columns:
-        color_idx = 4 if include_sale_year else 3
-        formula_parts.insert(color_idx, "color_category")
-
     if include_body_style:
         formula_parts.append("(1 | body_style)")
+
+    if include_color and "color_category" in df.columns:
+        formula_parts.append("(1 | color_category)")
 
     formula = " + ".join(formula_parts)
     logger.info(f"Model formula: {formula}")
@@ -182,7 +182,12 @@ def build_model(
     # Build priors
     prior_config = {**DEFAULT_PRIORS, **(priors or {})}
     bambi_priors = _build_bambi_priors(
-        prior_config, trim_col, trans_col, include_generation_slope, include_body_style
+        prior_config,
+        trim_col,
+        trans_col,
+        include_generation_slope,
+        include_body_style,
+        include_color and "color_category" in df.columns,
     )
 
     model = bmb.Model(formula, data=df, priors=bambi_priors, family="gaussian")
@@ -197,6 +202,7 @@ def _build_bambi_priors(
     trans_col: str,
     include_slope: bool,
     include_body_style: bool,
+    include_color: bool = False,
 ) -> dict[str, Any]:
     """Convert config dict to Bambi prior specifications.
 
@@ -206,6 +212,7 @@ def _build_bambi_priors(
         trans_col: Name of transmission column ('transmission' or 'trans_type')
         include_slope: Whether model includes age slope on generation
         include_body_style: Whether model includes body_style random intercept
+        include_color: Whether model includes color_category random intercept
 
     Returns:
         Dict of Bambi Prior objects
@@ -236,6 +243,11 @@ def _build_bambi_priors(
     if include_body_style:
         priors["1|body_style"] = bmb.Prior(
             "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["body_style_sd"])
+        )
+
+    if include_color:
+        priors["1|color_category"] = bmb.Prior(
+            "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["color_category_sd"])
         )
 
     return priors

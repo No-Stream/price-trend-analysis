@@ -74,7 +74,17 @@ def get_residuals(
         - residual_mean: observed - predicted_mean
         - residual_median: observed - predicted_median
         - age, mileage_scaled: for diagnostic plots
+
+    Raises:
+        ValueError: If df is empty or missing required columns
     """
+    if df.empty:
+        raise ValueError("DataFrame must not be empty")
+    required_cols = {"log_price", "age", "mileage_scaled"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"DataFrame missing required columns: {missing}")
+
     model.predict(idata, data=df, kind="response", inplace=True)
 
     log_price_samples = idata.posterior_predictive["log_price"].values
@@ -172,28 +182,32 @@ def plot_residual_comparison(
 
 def plot_residual_diagnostics(
     residuals_dict: dict[str, pd.DataFrame],
-    figsize: tuple[int, int] = (14, 10),
+    figsize: tuple[int, int] | None = None,
 ) -> plt.Figure:
     """Comprehensive residual diagnostics for model comparison.
 
-    Creates a 3x2 grid:
+    Creates a 3xN grid (N = number of models):
     - Row 1: Residuals vs fitted (one per model)
     - Row 2: Residuals vs age (one per model)
     - Row 3: Residuals vs mileage (one per model)
 
     Args:
         residuals_dict: Dict mapping model names to residual DataFrames
-        figsize: Figure size
+        figsize: Figure size (default: auto-scaled based on number of models)
 
     Returns:
         Matplotlib Figure
     """
-    if len(residuals_dict) != 2:
-        raise ValueError("plot_residual_diagnostics expects exactly 2 models")
+    n_models = len(residuals_dict)
+    if n_models == 0:
+        raise ValueError("residuals_dict must contain at least one model")
+
+    if figsize is None:
+        figsize = (7 * n_models, 10)
 
     model_names = list(residuals_dict.keys())
 
-    fig, axes = plt.subplots(3, 2, figsize=figsize)
+    fig, axes = plt.subplots(3, n_models, figsize=figsize, squeeze=False)
 
     for col, name in enumerate(model_names):
         residuals = residuals_dict[name]

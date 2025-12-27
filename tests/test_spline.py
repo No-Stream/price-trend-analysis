@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from price_analysis.models.comparison import (
+    compare_models_loo,
     compute_residual_stats,
     get_residuals,
 )
@@ -128,3 +129,30 @@ class TestComparisonUtilities:
         assert "rmse" in stats
         assert "mae" in stats
         assert stats["rmse"] >= 0
+
+    @pytest.mark.slow
+    def test_compare_models_loo_runs(self, minimal_spline_model_data: pd.DataFrame):
+        """LOO comparison runs without error."""
+        model = build_spline_model(minimal_spline_model_data)
+        idata = fit_spline_model(model, draws=10, tune=10, chains=1)
+
+        comparison = compare_models_loo({"spline": idata})
+
+        assert comparison is not None
+        assert "elpd_loo" in comparison.columns
+
+    def test_get_residuals_empty_df_raises(self, minimal_spline_model_data: pd.DataFrame):
+        """get_residuals raises on empty DataFrame."""
+        model = build_spline_model(minimal_spline_model_data)
+        empty_df = minimal_spline_model_data.iloc[:0]
+
+        with pytest.raises(ValueError, match="must not be empty"):
+            get_residuals(model, None, empty_df)
+
+    def test_get_residuals_missing_cols_raises(self, minimal_spline_model_data: pd.DataFrame):
+        """get_residuals raises on missing required columns."""
+        model = build_spline_model(minimal_spline_model_data)
+        bad_df = minimal_spline_model_data.drop(columns=["log_price"])
+
+        with pytest.raises(ValueError, match="missing required columns"):
+            get_residuals(model, None, bad_df)

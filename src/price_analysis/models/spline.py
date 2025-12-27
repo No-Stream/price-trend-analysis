@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from price_analysis.models.hierarchical import _truncated_normal_lower
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -123,6 +125,7 @@ def _build_spline_priors(config: dict[str, float]) -> dict[str, Any]:
         "1|body_style": bmb.Prior(
             "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["body_style_sd"])
         ),
+        "is_low_mileage": bmb.Prior(_truncated_normal_lower, sigma=config["low_mileage_sigma"]),
     }
 
 
@@ -167,6 +170,13 @@ def fit_spline_model(
         **kwargs,
     )
 
+    summary = az.summary(idata, var_names=["~1|"])
+    logger.info(f"Model summary:\n{summary}")
+
+    rhat_max = summary["r_hat"].max()
+    if rhat_max > 1.01:
+        logger.warning(f"Potential convergence issues: max R-hat = {rhat_max:.3f}")
+
     return idata
 
 
@@ -185,9 +195,13 @@ def plot_spline_effect(
     continuous variables at their median, and plots the predicted
     effect with uncertainty.
 
+    Note:
+        This function modifies `idata` in-place by adding posterior
+        predictive samples for the new data grid.
+
     Args:
         model: Fitted Bambi model
-        idata: InferenceData from model fitting
+        idata: InferenceData from model fitting (modified in-place)
         df: Original data (for computing medians and ranges)
         variable: Variable to plot ("age" or "mileage_scaled")
         n_points: Number of points in the grid

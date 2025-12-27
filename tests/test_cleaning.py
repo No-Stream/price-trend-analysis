@@ -7,6 +7,7 @@ from price_analysis.data.cleaning import (
     categorize_color,
     clean_listings,
     get_summary_stats,
+    normalize_color,
     prepare_model_data,
     validate_listing,
 )
@@ -129,6 +130,31 @@ class TestValidateListing:
         assert len(result.warnings) > 0
 
 
+class TestNormalizeColor:
+    """Test color normalization."""
+
+    @pytest.mark.parametrize(
+        "color,expected",
+        [
+            ("White  w/Python Green Graphics", "White"),
+            ("Gentian Blue Metallic & White", "Gentian Blue Metallic"),
+            ("GT Silver Metallic  w/Red Side Decals", "GT Silver Metallic"),
+            ("Chalk  w/Silver Stripe", "Chalk"),
+            ("GT Silver Metallic", "GT Silver Metallic"),
+            ("Black", "Black"),
+            (None, None),
+            ("  ", None),
+        ],
+    )
+    def test_normalize_color(self, color: str | None, expected: str | None):
+        """Color normalization removes suffixes and handles edge cases."""
+        assert normalize_color(color) == expected
+
+    def test_normalize_color_collapses_spaces(self):
+        """Multiple spaces collapsed to single space."""
+        assert normalize_color("GT  Silver   Metallic") == "GT Silver Metallic"
+
+
 class TestCategorizeColor:
     """Test color categorization."""
 
@@ -149,6 +175,19 @@ class TestCategorizeColor:
     def test_color_categorization(self, color: str | None, expected: str):
         """Colors correctly categorized as PTS, special, or standard."""
         assert categorize_color(color) == expected
+
+    @pytest.mark.parametrize(
+        "color",
+        [
+            "-to-Sample Irish Green",
+            "-To-Sample Jet Green Metallic",
+            "-to sample Ipanema Blue",
+            "-to-Sample British Racing Green",
+        ],
+    )
+    def test_truncated_pts_prefix_detected(self, color: str):
+        """Truncated Paint-to-Sample prefixes correctly detected as PTS."""
+        assert categorize_color(color) == "PTS"
 
 
 class TestPrepareModelData:
