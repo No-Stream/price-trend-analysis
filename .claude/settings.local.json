@@ -13,7 +13,9 @@
       "Skill(llm-code-smell-refactoring)",
       "Bash(nb-search:*)",
       "Bash(nb-outputs:*)",
-      "WebFetch(domain:www.pymc.io)"
+      "WebFetch(domain:www.pymc.io)",
+      "WebFetch(domain:bambinos.github.io)",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }
