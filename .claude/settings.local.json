@@ -12,7 +12,8 @@
       "Bash(nb-validate:*)",
       "Skill(llm-code-smell-refactoring)",
       "Bash(nb-search:*)",
-      "Bash(nb-outputs:*)"
+      "Bash(nb-outputs:*)",
+      "WebFetch(domain:www.pymc.io)"
     ]
   }
 }

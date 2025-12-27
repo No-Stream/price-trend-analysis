@@ -47,3 +47,4 @@ htmlcov/
 # PyMC / ArviZ
 *.nc
 *.netcdf
+.claude/settings.local.json
