@@ -180,6 +180,61 @@ class TestSplineModelWithColor:
         with pytest.raises(ValueError, match="Missing required columns.*color_category"):
             build_spline_model(minimal_spline_model_data, include_color=True)
 
+    @pytest.mark.slow
+    def test_predict_works_with_color(self, minimal_spline_model_data: pd.DataFrame):
+        """predict_spline_price works when model built with include_color=True."""
+        df_with_color = minimal_spline_model_data.copy()
+        df_with_color["color_category"] = pd.Categorical(
+            ["standard", "special", "PTS", "unknown"] * (len(df_with_color) // 4 + 1)
+        )[: len(df_with_color)]
+
+        model = build_spline_model(df_with_color, include_color=True, include_sale_year=False)
+        idata = fit_spline_model(model, draws=10, tune=10, chains=1)
+
+        pred = predict_spline_price(
+            model=model,
+            idata=idata,
+            df=df_with_color,
+            generation="992.1",
+            trim_tier="sport",
+            trans_type="pdk",
+            body_style="coupe",
+            model_year=2022,
+            mileage=15000,
+            sale_year=2025,
+            include_sale_year=False,
+        )
+
+        assert pred["price"]["median"] > 0
+
+    @pytest.mark.slow
+    def test_predict_with_explicit_color(self, minimal_spline_model_data: pd.DataFrame):
+        """predict_spline_price accepts explicit color_category argument."""
+        df_with_color = minimal_spline_model_data.copy()
+        df_with_color["color_category"] = pd.Categorical(
+            ["standard", "special", "PTS", "unknown"] * (len(df_with_color) // 4 + 1)
+        )[: len(df_with_color)]
+
+        model = build_spline_model(df_with_color, include_color=True, include_sale_year=False)
+        idata = fit_spline_model(model, draws=10, tune=10, chains=1)
+
+        pred = predict_spline_price(
+            model=model,
+            idata=idata,
+            df=df_with_color,
+            generation="992.1",
+            trim_tier="sport",
+            trans_type="pdk",
+            body_style="coupe",
+            model_year=2022,
+            mileage=15000,
+            sale_year=2025,
+            include_sale_year=False,
+            color_category="PTS",
+        )
+
+        assert pred["price"]["median"] > 0
+
 
 class TestPredictSplinePrice:
     """Test predict_spline_price function."""

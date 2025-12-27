@@ -1,4 +1,4 @@
-.PHONY: format lint test test-fast check clean install env env-update
+.PHONY: format lint test test-fast test-slow check clean install env env-update
 
 # Conda environment path
 CONDA_ENV := /opt/homebrew/Caskroom/miniconda/base/envs/price-analysis/bin
@@ -13,13 +13,17 @@ lint:
 	$(CONDA_ENV)/ruff check src tests
 	$(CONDA_ENV)/ruff format --check src tests notebooks
 
-# Run all tests (default)
+# Run all tests (default, ~30s with model fits)
 test:
 	$(CONDA_ENV)/pytest tests -v
 
-# Run fast tests only (skip model fitting)
+# Run fast tests only (skip model fitting, ~3s)
 test-fast:
 	$(CONDA_ENV)/pytest tests -v -m "not slow"
+
+# Run slow tests only (model fitting tests)
+test-slow:
+	$(CONDA_ENV)/pytest tests -v -m slow
 
 # Run all checks (format + lint + test)
 check: lint test

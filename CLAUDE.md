@@ -43,15 +43,18 @@ notebooks/
 
 ## Commands
 
+**IMPORTANT: Always use these Makefile commands. Never run raw pytest, ruff, or pip commands directly - they are pre-approved and won't require manual approval.**
+
 ```bash
 # Testing
-make test        # Run all tests including slow model fits (~30s)
+make test        # Run ALL tests including slow model fits (~30s)
 make test-fast   # Skip slow tests (~3s) - use for quick iteration
+make test-slow   # Run only slow tests (model fitting)
 
 # Code quality
 make format      # Auto-format with ruff (also fixes lint issues)
 make lint        # Check formatting and lint (no changes)
-make check       # lint + test (CI pipeline)
+make check       # lint + test (full CI pipeline)
 
 # Environment
 make env         # Create conda environment from environment.yml
@@ -60,7 +63,7 @@ make install     # Install package in editable mode
 make clean       # Remove __pycache__, .pyc, etc.
 ```
 
-**Workflow:** `make format` before commits, `make test-fast` during dev, `make check` before PR.
+**Workflow:** `make format` before commits, `make test-fast` during dev, `make test` to verify all tests pass, `make check` before PR.
 
 ## Key Design Decisions
 

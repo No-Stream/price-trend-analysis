@@ -60,6 +60,7 @@ class TestModelSmoke:
         result = predict_price(
             model=model,
             idata=idata,
+            df=minimal_model_data,
             generation="992.1",
             trim_tier="sport",
             trans_type="pdk",
@@ -98,6 +99,7 @@ class TestModelSmoke:
         pred = predict_price(
             model=model,
             idata=idata,
+            df=minimal_model_data,
             generation="992.1",
             trim_tier="sport",
             trans_type="pdk",
@@ -115,6 +117,59 @@ class TestModelSmoke:
         assert "992.1" in summary
         assert "sport" in summary
         assert "$" in summary
+
+    @pytest.mark.slow
+    def test_prediction_with_color(self, minimal_model_data: pd.DataFrame):
+        """Prediction works when model built with include_color=True."""
+        df = minimal_model_data.copy()
+        df["color_category"] = pd.Categorical(["standard", "special", "PTS"] * 10)
+
+        model = build_model(df, include_color=True, use_trim_tier=True, use_trans_type=True)
+        idata = fit_model(model, draws=10, tune=10, chains=1)
+
+        result = predict_price(
+            model=model,
+            idata=idata,
+            df=df,
+            generation="992.1",
+            trim_tier="sport",
+            trans_type="pdk",
+            body_style="coupe",
+            model_year=2022,
+            mileage=15000,
+            sale_year=2025,
+            mileage_mean=30000,
+            mileage_std=20000,
+        )
+
+        assert result["price"]["median"] > 0
+
+    @pytest.mark.slow
+    def test_prediction_with_explicit_color(self, minimal_model_data: pd.DataFrame):
+        """Prediction accepts explicit color_category argument."""
+        df = minimal_model_data.copy()
+        df["color_category"] = pd.Categorical(["standard", "special", "PTS"] * 10)
+
+        model = build_model(df, include_color=True, use_trim_tier=True, use_trans_type=True)
+        idata = fit_model(model, draws=10, tune=10, chains=1)
+
+        result = predict_price(
+            model=model,
+            idata=idata,
+            df=df,
+            generation="992.1",
+            trim_tier="sport",
+            trans_type="pdk",
+            body_style="coupe",
+            model_year=2022,
+            mileage=15000,
+            sale_year=2025,
+            mileage_mean=30000,
+            mileage_std=20000,
+            color_category="PTS",
+        )
+
+        assert result["price"]["median"] > 0
 
 
 class TestModelBuilding:

@@ -350,6 +350,7 @@ def check_diagnostics(idata: az.InferenceData) -> dict:
 def predict_price(
     model: bmb.Model,
     idata: az.InferenceData,
+    df: pd.DataFrame,
     generation: str,
     trim_tier: str,
     trans_type: str,
@@ -359,6 +360,7 @@ def predict_price(
     sale_year: int,
     mileage_mean: float,
     mileage_std: float,
+    color_category: str | None = None,
 ) -> dict:
     """Predict price distribution for a specific car configuration.
 
@@ -367,6 +369,7 @@ def predict_price(
     Args:
         model: Fitted Bambi model
         idata: InferenceData from model fitting
+        df: Original training data (for categorical levels)
         generation: Car generation (e.g., "992.1")
         trim_tier: Trim tier (e.g., "base", "sport", "gts", "gt", "turbo", "rs")
         trans_type: Transmission type (e.g., "manual", "pdk", "auto")
@@ -376,6 +379,9 @@ def predict_price(
         sale_year: Year of (hypothetical) sale
         mileage_mean: Mean mileage from training data (for scaling)
         mileage_std: Std dev of mileage from training data (for scaling)
+        color_category: Color category (e.g., "standard", "special", "pts").
+            If None, uses mode from df. Only needed if model was built with
+            include_color=True.
 
     Returns:
         Dict with price predictions and uncertainty intervals
@@ -391,12 +397,18 @@ def predict_price(
             "mileage_scaled": [mileage_scaled],
             "is_low_mileage": [is_low_mileage],
             "sale_year": [sale_year],
-            "generation": pd.Categorical([generation]),
-            "body_style": pd.Categorical([body_style]),
-            "trim_tier": pd.Categorical([trim_tier]),
-            "trans_type": pd.Categorical([trans_type]),
+            "generation": pd.Categorical([generation], categories=df["generation"].cat.categories),
+            "body_style": pd.Categorical([body_style], categories=df["body_style"].cat.categories),
+            "trim_tier": pd.Categorical([trim_tier], categories=df["trim_tier"].cat.categories),
+            "trans_type": pd.Categorical([trans_type], categories=df["trans_type"].cat.categories),
         }
     )
+
+    if "color_category" in df.columns:
+        color_val = color_category if color_category else df["color_category"].mode().iloc[0]
+        new_data["color_category"] = pd.Categorical(
+            [color_val], categories=df["color_category"].cat.categories
+        )
 
     model.predict(idata, data=new_data, kind="response", inplace=True)
 

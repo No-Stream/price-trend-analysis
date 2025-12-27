@@ -333,6 +333,7 @@ def predict_spline_price(
     mileage: int,
     sale_year: int,
     include_sale_year: bool = False,
+    color_category: str | None = None,
 ) -> dict:
     """Predict price distribution for a specific car using the spline model.
 
@@ -351,6 +352,9 @@ def predict_spline_price(
         mileage: Current mileage (raw miles, will be log-transformed)
         sale_year: Year of (hypothetical) sale
         include_sale_year: Whether the model includes sale_year as predictor
+        color_category: Color category (e.g., "standard", "special", "pts").
+            If None, uses mode from df. Only needed if model was built with
+            include_color=True.
 
     Returns:
         Dict with price predictions and uncertainty intervals, compatible
@@ -372,6 +376,12 @@ def predict_spline_price(
 
     if include_sale_year:
         new_data["sale_year"] = sale_year
+
+    if "color_category" in df.columns:
+        color_val = color_category if color_category else df["color_category"].mode().iloc[0]
+        new_data["color_category"] = pd.Categorical(
+            [color_val], categories=df["color_category"].cat.categories
+        )
 
     model.predict(idata, data=new_data, kind="response", inplace=True)
 
