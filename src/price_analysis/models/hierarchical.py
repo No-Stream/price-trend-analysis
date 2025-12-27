@@ -513,3 +513,38 @@ def format_prediction_summary(pred: dict) -> str:
     ]
 
     return "\n".join(lines)
+
+
+def plot_model_graph(model: bmb.Model, figsize: tuple[int, int] | None = None):
+    """Display the model's graphical structure (DAG).
+
+    Uses PyMC's model_to_graphviz to visualize the hierarchical structure,
+    showing how parameters relate to each other and to the data.
+
+    Args:
+        model: Bambi Model object (built but not necessarily fitted)
+        figsize: Optional figure size tuple (width, height) in inches.
+            If None, uses graphviz default sizing.
+
+    Returns:
+        graphviz.Digraph object (displays in Jupyter, can be saved with .render())
+
+    Example:
+        >>> model = build_model(df)
+        >>> graph = plot_model_graph(model)
+        >>> graph.render("model_dag", format="png")  # Save to file
+    """
+    # Bambi wraps PyMC - access the underlying PyMC model
+    # Need to build the PyMC model first if not already built
+    if not hasattr(model, "backend") or model.backend is None:
+        model.build()
+
+    pymc_model = model.backend.model
+
+    # Use PyMC's graphviz visualization
+    graph = pm.model_to_graphviz(pymc_model)
+
+    if figsize is not None:
+        graph.attr(size=f"{figsize[0]},{figsize[1]}")
+
+    return graph

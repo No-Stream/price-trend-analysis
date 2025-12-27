@@ -185,6 +185,7 @@ def minimal_model_data() -> pd.DataFrame:
     generations = ["991.2", "992.1"]
     trims = ["Carrera", "Carrera S", "Carrera 4S"]
     transmissions = ["PDK", "Manual"]
+    body_styles = ["coupe", "cabriolet", "targa"]
 
     data = {
         "log_price": np.random.normal(11.7, 0.3, n),  # ~$120k median
@@ -195,5 +196,6 @@ def minimal_model_data() -> pd.DataFrame:
         "generation": pd.Categorical(np.random.choice(generations, n)),
         "trim": pd.Categorical(np.random.choice(trims, n)),
         "transmission": pd.Categorical(np.random.choice(transmissions, n)),
+        "body_style": pd.Categorical(np.random.choice(body_styles, n)),
     }
     return pd.DataFrame(data)
