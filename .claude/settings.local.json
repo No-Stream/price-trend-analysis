@@ -11,7 +11,8 @@
       "Bash(nb-overview:*)",
       "Bash(nb-validate:*)",
       "Skill(llm-code-smell-refactoring)",
-      "Bash(nb-search:*)"
+      "Bash(nb-search:*)",
+      "Bash(nb-outputs:*)"
     ]
   }
 }

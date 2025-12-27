@@ -187,7 +187,7 @@ def fit_spline_model(
         **kwargs,
     )
 
-    summary = az.summary(idata, var_names=["~1|"])
+    summary = az.summary(idata, var_names=["~1|"], filter_vars="like")
     logger.info(f"Model summary:\n{summary}")
 
     rhat_max = summary["r_hat"].max()

@@ -300,7 +300,9 @@ def fit_model(
     )
 
     # Log basic diagnostics
-    summary = az.summary(idata, var_names=["~1|", "~age|"])  # Fixed effects only
+    summary = az.summary(
+        idata, var_names=["~1|", "~age|"], filter_vars="like"
+    )  # Fixed effects only
     logger.info(f"Model summary:\n{summary}")
 
     # Check for convergence issues
