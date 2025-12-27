@@ -348,6 +348,7 @@ def predict_price(
     mileage_std: float,
     trim_tier: str | None = None,
     trans_type: str | None = None,
+    body_style: str = "coupe",
 ) -> dict:
     """Predict price distribution for a specific car configuration.
 
@@ -368,6 +369,8 @@ def predict_price(
             If None, uses trim column (for models without grouping).
         trans_type: If model uses trans_type, provide directly (e.g., "manual").
             If None, uses transmission column (for models without grouping).
+        body_style: Body style for the car. One of "coupe", "cabriolet", "targa",
+            or "speedster". Defaults to "coupe".
 
     Returns:
         Dict with price predictions and uncertainty intervals
@@ -384,6 +387,7 @@ def predict_price(
             "is_low_mileage": [is_low_mileage],
             "sale_year": [sale_year],
             "generation": pd.Categorical([generation]),
+            "body_style": pd.Categorical([body_style]),
         }
     )
 

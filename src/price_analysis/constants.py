@@ -33,7 +33,7 @@ TRIM_MAPPING = {
 
 # Scraping configuration defaults
 SCRAPING_DEFAULTS = {
-    "max_clicks": 25,
+    "max_clicks": 50,
     "delay": 1.0,
     "headless": True,
 }

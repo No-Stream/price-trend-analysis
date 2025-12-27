@@ -199,3 +199,34 @@ def minimal_model_data() -> pd.DataFrame:
         "body_style": pd.Categorical(np.random.choice(body_styles, n)),
     }
     return pd.DataFrame(data)
+
+
+@pytest.fixture
+def minimal_spline_model_data() -> pd.DataFrame:
+    """Minimal dataset for spline model smoke testing.
+
+    Similar to minimal_model_data but includes trim_tier and trans_type
+    columns required by spline model.
+    """
+    import numpy as np
+
+    np.random.seed(42)
+
+    n = 30
+    generations = ["991.2", "992.1"]
+    trim_tiers = ["base", "sport", "gt", "turbo"]
+    trans_types = ["pdk", "manual"]
+    body_styles = ["coupe", "cabriolet", "targa"]
+
+    data = {
+        "log_price": np.random.normal(11.7, 0.3, n),
+        "age": np.random.randint(1, 15, n),
+        "mileage_scaled": np.random.normal(0, 1, n),
+        "is_low_mileage": np.random.choice([0, 1], n, p=[0.85, 0.15]),
+        "sale_year": np.random.choice([2024, 2025], n),
+        "generation": pd.Categorical(np.random.choice(generations, n)),
+        "trim_tier": pd.Categorical(np.random.choice(trim_tiers, n)),
+        "trans_type": pd.Categorical(np.random.choice(trans_types, n)),
+        "body_style": pd.Categorical(np.random.choice(body_styles, n)),
+    }
+    return pd.DataFrame(data)
