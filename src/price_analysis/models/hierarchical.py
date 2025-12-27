@@ -351,16 +351,14 @@ def predict_price(
     model: bmb.Model,
     idata: az.InferenceData,
     generation: str,
-    trim: str,
-    transmission: str,
+    trim_tier: str,
+    trans_type: str,
+    body_style: str,
     model_year: int,
     mileage: int,
     sale_year: int,
     mileage_mean: float,
     mileage_std: float,
-    trim_tier: str | None = None,
-    trans_type: str | None = None,
-    body_style: str = "coupe",
 ) -> dict:
     """Predict price distribution for a specific car configuration.
 
@@ -370,19 +368,14 @@ def predict_price(
         model: Fitted Bambi model
         idata: InferenceData from model fitting
         generation: Car generation (e.g., "992.1")
-        trim: Trim level (e.g., "Carrera 4S") - used for display
-        transmission: Transmission type (e.g., "PDK") - used for display
+        trim_tier: Trim tier (e.g., "base", "sport", "gts", "gt", "turbo", "rs")
+        trans_type: Transmission type (e.g., "manual", "pdk", "auto")
+        body_style: Body style (e.g., "coupe", "cabriolet", "targa", "speedster")
         model_year: Model year of car
         mileage: Current mileage
         sale_year: Year of (hypothetical) sale
         mileage_mean: Mean mileage from training data (for scaling)
         mileage_std: Std dev of mileage from training data (for scaling)
-        trim_tier: If model uses trim_tier, provide directly (e.g., "sport").
-            If None, uses trim column (for models without grouping).
-        trans_type: If model uses trans_type, provide directly (e.g., "manual").
-            If None, uses transmission column (for models without grouping).
-        body_style: Body style for the car. One of "coupe", "cabriolet", "targa",
-            or "speedster". Defaults to "coupe".
 
     Returns:
         Dict with price predictions and uncertainty intervals
@@ -400,33 +393,22 @@ def predict_price(
             "sale_year": [sale_year],
             "generation": pd.Categorical([generation]),
             "body_style": pd.Categorical([body_style]),
+            "trim_tier": pd.Categorical([trim_tier]),
+            "trans_type": pd.Categorical([trans_type]),
         }
     )
 
-    # Handle trim vs trim_tier based on what model expects
-    if trim_tier is not None:
-        new_data["trim_tier"] = pd.Categorical([trim_tier])
-    else:
-        new_data["trim"] = pd.Categorical([trim])
-
-    # Handle transmission vs trans_type based on what model expects
-    if trans_type is not None:
-        new_data["trans_type"] = pd.Categorical([trans_type])
-    else:
-        new_data["transmission"] = pd.Categorical([transmission])
-
-    # Get posterior predictive samples
     model.predict(idata, data=new_data, kind="response", inplace=True)
 
-    # Extract samples (shape: chains x draws)
     log_price_samples = idata.posterior_predictive["log_price"].values.flatten()
     price_samples = np.exp(log_price_samples)
 
     return {
         "config": {
             "generation": generation,
-            "trim": trim,
-            "transmission": transmission,
+            "trim_tier": trim_tier,
+            "trans_type": trans_type,
+            "body_style": body_style,
             "model_year": model_year,
             "mileage": mileage,
             "sale_year": sale_year,
@@ -517,7 +499,7 @@ def format_prediction_summary(pred: dict) -> str:
 
     lines = [
         "Price prediction for:",
-        f"  {cfg['model_year']} {cfg['generation']} {cfg['trim']} ({cfg['transmission']})",
+        f"  {cfg['model_year']} {cfg['generation']} {cfg['trim_tier']} ({cfg['trans_type']})",
         f"  Mileage: {cfg['mileage']:,} miles",
         f"  Sale year: {cfg['sale_year']} (age: {cfg['age']} years)",
         "",

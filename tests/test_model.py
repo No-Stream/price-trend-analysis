@@ -22,7 +22,7 @@ class TestModelSmoke:
 
     def test_model_builds(self, minimal_model_data: pd.DataFrame):
         """Model builds without error."""
-        model = build_model(minimal_model_data)
+        model = build_model(minimal_model_data, use_trim_tier=True, use_trans_type=True)
         assert model is not None
         assert model.formula is not None
 
@@ -33,7 +33,7 @@ class TestModelSmoke:
         This test is marked slow since even minimal MCMC takes a few seconds.
         Run with: pytest -m slow
         """
-        model = build_model(minimal_model_data)
+        model = build_model(minimal_model_data, use_trim_tier=True, use_trans_type=True)
         idata = fit_model(model, draws=10, tune=10, chains=1)
 
         assert idata is not None
@@ -42,7 +42,7 @@ class TestModelSmoke:
     @pytest.mark.slow
     def test_diagnostics_run(self, minimal_model_data: pd.DataFrame):
         """Diagnostic functions run without error."""
-        model = build_model(minimal_model_data)
+        model = build_model(minimal_model_data, use_trim_tier=True, use_trans_type=True)
         idata = fit_model(model, draws=10, tune=10, chains=1)
 
         diagnostics = check_diagnostics(idata)
@@ -54,15 +54,16 @@ class TestModelSmoke:
     @pytest.mark.slow
     def test_prediction_runs(self, minimal_model_data: pd.DataFrame):
         """Prediction function runs without error."""
-        model = build_model(minimal_model_data)
+        model = build_model(minimal_model_data, use_trim_tier=True, use_trans_type=True)
         idata = fit_model(model, draws=10, tune=10, chains=1)
 
         result = predict_price(
             model=model,
             idata=idata,
             generation="992.1",
-            trim="Carrera 4S",
-            transmission="PDK",
+            trim_tier="sport",
+            trans_type="pdk",
+            body_style="coupe",
             model_year=2022,
             mileage=15000,
             sale_year=2025,
@@ -78,7 +79,7 @@ class TestModelSmoke:
     @pytest.mark.slow
     def test_extract_effects_runs(self, minimal_model_data: pd.DataFrame):
         """Effect extraction runs without error."""
-        model = build_model(minimal_model_data)
+        model = build_model(minimal_model_data, use_trim_tier=True, use_trans_type=True)
         idata = fit_model(model, draws=10, tune=10, chains=1)
 
         effects = extract_effects(idata)
@@ -91,15 +92,16 @@ class TestModelSmoke:
     @pytest.mark.slow
     def test_format_prediction_summary(self, minimal_model_data: pd.DataFrame):
         """Prediction summary formatting works."""
-        model = build_model(minimal_model_data)
+        model = build_model(minimal_model_data, use_trim_tier=True, use_trans_type=True)
         idata = fit_model(model, draws=10, tune=10, chains=1)
 
         pred = predict_price(
             model=model,
             idata=idata,
             generation="992.1",
-            trim="Carrera 4S",
-            transmission="PDK",
+            trim_tier="sport",
+            trans_type="pdk",
+            body_style="coupe",
             model_year=2022,
             mileage=15000,
             sale_year=2025,
@@ -111,7 +113,7 @@ class TestModelSmoke:
 
         assert isinstance(summary, str)
         assert "992.1" in summary
-        assert "Carrera 4S" in summary
+        assert "sport" in summary
         assert "$" in summary
 
 
@@ -124,7 +126,7 @@ class TestModelBuilding:
         df = minimal_model_data.copy()
         df["color_category"] = pd.Categorical(["standard", "special", "PTS"] * 10)
 
-        model = build_model(df, include_color=True)
+        model = build_model(df, include_color=True, use_trim_tier=True, use_trans_type=True)
         assert model is not None
 
     def test_model_requires_all_columns(self):

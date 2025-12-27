@@ -263,6 +263,12 @@ def plot_spline_effect(
         }
     )
 
+    if "color_category" in df.columns:
+        color_mode = df["color_category"].mode().iloc[0]
+        new_data["color_category"] = pd.Categorical(
+            [color_mode] * n_points, categories=df["color_category"].cat.categories
+        )
+
     model.predict(idata, data=new_data, kind="response", inplace=True)
 
     log_price_samples = idata.posterior_predictive["log_price"].values
