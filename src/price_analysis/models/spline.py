@@ -28,8 +28,8 @@ DEFAULT_SPLINE_PRIORS = {
 
 def build_spline_model(
     df: pd.DataFrame,
-    age_df: int = 4,
-    mileage_df: int = 4,
+    age_df: int = 6,
+    mileage_df: int = 6,
     include_sale_year: bool = True,
     include_color: bool = False,
     priors: dict[str, Any] | None = None,
@@ -63,8 +63,8 @@ def build_spline_model(
 
     Args:
         df: Model-ready DataFrame with required columns
-        age_df: Degrees of freedom for age spline (default 4)
-        mileage_df: Degrees of freedom for log-mileage spline (default 4)
+        age_df: Degrees of freedom for age spline (default 6)
+        mileage_df: Degrees of freedom for log-mileage spline (default 6)
         include_sale_year: Whether to include sale_year as fixed effect
         include_color: Whether to include color_category as random intercept
         priors: Optional dict of custom priors

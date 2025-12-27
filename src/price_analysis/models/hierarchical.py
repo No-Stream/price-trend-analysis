@@ -43,6 +43,7 @@ DEFAULT_PRIORS = {
     "age_sigma": 0.05,  # bounded ≤0 (older = cheaper)
     "mileage_sigma": 0.3,  # bounded ≤0 (more miles = cheaper)
     "low_mileage_sigma": 0.2,  # bounded ≥0 (low miles = bonus)
+    "log_mileage_sigma": 0.3,  # bounded ≤0 (for log-mileage parameterization)
 }
 
 
@@ -54,6 +55,7 @@ def build_model(
     include_body_style: bool = True,
     use_trim_tier: bool = False,
     use_trans_type: bool = False,
+    use_log_mileage: bool = False,
     priors: dict[str, Any] | None = None,
 ) -> bmb.Model:
     """Build hierarchical Bayesian model for 911 prices.
@@ -120,6 +122,10 @@ def build_model(
             trim levels. Requires prepare_model_data(group_trims=True).
         use_trans_type: Whether to use grouped trans_type (manual/pdk/auto)
             instead of 4 transmission levels. Requires prepare_model_data(group_trans=True).
+        use_log_mileage: Whether to use log(mileage) instead of mileage_scaled + is_low_mileage.
+            When True, uses a single log_mileage term with truncated normal prior (≤0).
+            This captures diminishing marginal effect of mileage naturally via log transform.
+            When False (default), uses z-scored mileage_scaled + binary is_low_mileage indicator.
         priors: Optional dict of custom priors. Keys can include:
             Random effect SDs (HalfNormal sigma):
             - 'generation_sd': Generation intercept SD (default 0.5)
@@ -141,12 +147,14 @@ def build_model(
     required_cols = [
         "log_price",
         "age",
-        "mileage_scaled",
-        "is_low_mileage",
         "generation",
         trim_col,
         trans_col,
     ]
+    if use_log_mileage:
+        required_cols.append("log_mileage")
+    else:
+        required_cols.extend(["mileage_scaled", "is_low_mileage"])
     if include_sale_year:
         required_cols.append("sale_year")
     if include_body_style:
@@ -157,11 +165,15 @@ def build_model(
 
     # Build formula
     generation_re = "(1 + age | generation)" if include_generation_slope else "(1 | generation)"
+    if use_log_mileage:
+        mileage_terms = ["log_mileage"]
+    else:
+        mileage_terms = ["mileage_scaled", "is_low_mileage"]
+
     formula_parts = [
         "log_price ~ 1",
         "age",
-        "mileage_scaled",
-        "is_low_mileage",
+        *mileage_terms,
         generation_re,
         f"(1 | {trim_col})",
         f"(1 | {trans_col})",
@@ -188,6 +200,7 @@ def build_model(
         include_generation_slope,
         include_body_style,
         include_color and "color_category" in df.columns,
+        use_log_mileage,
     )
 
     model = bmb.Model(formula, data=df, priors=bambi_priors, family="gaussian")
@@ -203,6 +216,7 @@ def _build_bambi_priors(
     include_slope: bool,
     include_body_style: bool,
     include_color: bool = False,
+    use_log_mileage: bool = False,
 ) -> dict[str, Any]:
     """Convert config dict to Bambi prior specifications.
 
@@ -213,6 +227,7 @@ def _build_bambi_priors(
         include_slope: Whether model includes age slope on generation
         include_body_style: Whether model includes body_style random intercept
         include_color: Whether model includes color_category random intercept
+        use_log_mileage: Whether model uses log_mileage instead of mileage_scaled + is_low_mileage
 
     Returns:
         Dict of Bambi Prior objects
@@ -231,9 +246,17 @@ def _build_bambi_priors(
         # Fixed effects - truncated Normals (equivalent to HalfNormal at mu=0)
         # Use custom prior functions for truncation
         "age": bmb.Prior(_truncated_normal_upper, sigma=config["age_sigma"]),
-        "mileage_scaled": bmb.Prior(_truncated_normal_upper, sigma=config["mileage_sigma"]),
-        "is_low_mileage": bmb.Prior(_truncated_normal_lower, sigma=config["low_mileage_sigma"]),
     }
+
+    if use_log_mileage:
+        priors["log_mileage"] = bmb.Prior(
+            _truncated_normal_upper, sigma=config["log_mileage_sigma"]
+        )
+    else:
+        priors["mileage_scaled"] = bmb.Prior(_truncated_normal_upper, sigma=config["mileage_sigma"])
+        priors["is_low_mileage"] = bmb.Prior(
+            _truncated_normal_lower, sigma=config["low_mileage_sigma"]
+        )
 
     if include_slope:
         priors["age|generation"] = bmb.Prior(
@@ -360,9 +383,10 @@ def predict_price(
     model_year: int,
     mileage: int,
     sale_year: int,
-    mileage_mean: float,
-    mileage_std: float,
+    mileage_mean: float | None = None,
+    mileage_std: float | None = None,
     color_category: str | None = None,
+    use_log_mileage: bool = False,
 ) -> dict:
     """Predict price distribution for a specific car configuration.
 
@@ -379,25 +403,24 @@ def predict_price(
         model_year: Model year of car
         mileage: Current mileage
         sale_year: Year of (hypothetical) sale
-        mileage_mean: Mean mileage from training data (for scaling)
-        mileage_std: Std dev of mileage from training data (for scaling)
+        mileage_mean: Mean mileage from training data (for scaling).
+            Required when use_log_mileage=False, ignored otherwise.
+        mileage_std: Std dev of mileage from training data (for scaling).
+            Required when use_log_mileage=False, ignored otherwise.
         color_category: Color category (e.g., "standard", "special", "pts").
             If None, uses mode from df. Only needed if model was built with
             include_color=True.
+        use_log_mileage: Whether model uses log_mileage parameterization.
+            Must match the use_log_mileage setting used in build_model().
 
     Returns:
         Dict with price predictions and uncertainty intervals
     """
     age = sale_year - model_year
-    mileage_scaled = (mileage - mileage_mean) / mileage_std
-
-    is_low_mileage = 1 if mileage < 10000 else 0
 
     new_data = pd.DataFrame(
         {
             "age": [age],
-            "mileage_scaled": [mileage_scaled],
-            "is_low_mileage": [is_low_mileage],
             "sale_year": [sale_year],
             "generation": pd.Categorical([generation], categories=df["generation"].cat.categories),
             "body_style": pd.Categorical([body_style], categories=df["body_style"].cat.categories),
@@ -405,6 +428,14 @@ def predict_price(
             "trans_type": pd.Categorical([trans_type], categories=df["trans_type"].cat.categories),
         }
     )
+
+    if use_log_mileage:
+        new_data["log_mileage"] = np.log(max(mileage, 1))
+    else:
+        if mileage_mean is None or mileage_std is None:
+            raise ValueError("mileage_mean and mileage_std required when use_log_mileage=False")
+        new_data["mileage_scaled"] = (mileage - mileage_mean) / mileage_std
+        new_data["is_low_mileage"] = 1 if mileage < 10000 else 0
 
     if "color_category" in df.columns:
         color_val = color_category if color_category else df["color_category"].mode().iloc[0]
