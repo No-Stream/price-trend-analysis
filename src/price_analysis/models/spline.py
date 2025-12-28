@@ -18,6 +18,14 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 DEFAULT_SPLINE_PRIORS = {
+    # Global intercept and residual SD
+    "intercept_mu": 11.5,  # log($100k) - typical 911 price
+    "intercept_sigma": 1.0,  # ±2σ covers ~$9k to $1M
+    "sigma_lam": 3.0,  # Exponential rate for residual SD (mean=0.33, ~30% variation)
+    # Spline coefficient priors - controls smoothness and prevents extreme predictions
+    # Normal(0, 2) means 95% of coefficients in (-4, 4) on log-price scale
+    "spline_sigma": 2.0,
+    # Random effect SDs (HalfNormal scale parameters)
     "generation_sd": 0.5,
     "trim_sd": 0.7,
     "transmission_sd": 0.3,
@@ -67,7 +75,18 @@ def build_spline_model(
         mileage_df: Degrees of freedom for log-mileage spline (default 6)
         include_sale_year: Whether to include sale_year as fixed effect
         include_color: Whether to include color_category as random intercept
-        priors: Optional dict of custom priors
+        priors: Optional dict of custom priors. Keys can include:
+            Global priors:
+            - 'intercept_mu': Intercept mean (default 11.5, i.e. log($100k))
+            - 'intercept_sigma': Intercept SD (default 1.0)
+            - 'sigma_lam': Residual SD Exponential rate (default 3.0, mean=0.33)
+            - 'spline_sigma': Spline coefficient SD (default 2.0)
+            Random effect SDs (HalfNormal sigma):
+            - 'generation_sd': Generation intercept SD (default 0.5)
+            - 'trim_sd': Trim intercept SD (default 0.7)
+            - 'transmission_sd': Transmission intercept SD (default 0.3)
+            - 'body_style_sd': Body style intercept SD (default 0.3)
+            - 'color_category_sd': Color category intercept SD (default 0.3)
 
     Returns:
         Bambi Model object (unfitted)
@@ -113,7 +132,9 @@ def build_spline_model(
     logger.info(f"Spline model formula: {formula}")
 
     prior_config = {**DEFAULT_SPLINE_PRIORS, **(priors or {})}
-    bambi_priors = _build_spline_priors(prior_config, include_color=include_color)
+    bambi_priors = _build_spline_priors(
+        prior_config, age_df=age_df, mileage_df=mileage_df, include_color=include_color
+    )
 
     model = bmb.Model(formula, data=df, priors=bambi_priors, family="gaussian")
     logger.info(f"Built spline model with {len(df)} observations")
@@ -121,9 +142,30 @@ def build_spline_model(
     return model
 
 
-def _build_spline_priors(config: dict[str, float], include_color: bool = False) -> dict[str, Any]:
-    """Convert config dict to Bambi prior specifications for spline model."""
+def _build_spline_priors(
+    config: dict[str, float],
+    age_df: int,
+    mileage_df: int,
+    include_color: bool = False,
+) -> dict[str, Any]:
+    """Convert config dict to Bambi prior specifications for spline model.
+
+    Args:
+        config: Dict with prior parameters
+        age_df: Degrees of freedom for age spline (to construct term name)
+        mileage_df: Degrees of freedom for mileage spline (to construct term name)
+        include_color: Whether model includes color_category random intercept
+    """
     priors = {
+        # Global intercept and residual SD - critical for reasonable prior predictive
+        "Intercept": bmb.Prior("Normal", mu=config["intercept_mu"], sigma=config["intercept_sigma"]),
+        "sigma": bmb.Prior("Exponential", lam=config["sigma_lam"]),
+        # Spline coefficient priors - prevents extreme predictions
+        f"bs(age, df={age_df})": bmb.Prior("Normal", mu=0, sigma=config["spline_sigma"]),
+        f"bs(log_mileage, df={mileage_df})": bmb.Prior(
+            "Normal", mu=0, sigma=config["spline_sigma"]
+        ),
+        # Random effects
         "1|generation": bmb.Prior(
             "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["generation_sd"])
         ),

@@ -32,6 +32,10 @@ def _truncated_normal_lower(name, sigma, *args, dims=None, **kwargs):
 # These constrain parameters to reasonable ranges while allowing data to dominate
 # sigma=0.5 on log-price means ~65% price difference at 1 SD
 DEFAULT_PRIORS = {
+    # Global intercept and residual SD
+    "intercept_mu": 11.5,  # log($100k) - typical 911 price
+    "intercept_sigma": 1.0,  # ±2σ covers ~$9k to $1M
+    "sigma_lam": 3.0,  # Exponential rate for residual SD (mean=0.33, ~30% variation)
     # Random effect SDs (HalfNormal scale parameters)
     "generation_sd": 0.5,
     "trim_sd": 0.7,  # widened from 0.5 - data wants more variation
@@ -127,6 +131,10 @@ def build_model(
             This captures diminishing marginal effect of mileage naturally via log transform.
             When False (default), uses z-scored mileage_scaled + binary is_low_mileage indicator.
         priors: Optional dict of custom priors. Keys can include:
+            Global priors:
+            - 'intercept_mu': Intercept mean (default 11.5, i.e. log($100k))
+            - 'intercept_sigma': Intercept SD (default 1.0)
+            - 'sigma_lam': Residual SD Exponential rate (default 3.0, mean=0.33)
             Random effect SDs (HalfNormal sigma):
             - 'generation_sd': Generation intercept SD (default 0.5)
             - 'trim_sd': Trim intercept SD (default 0.7)
@@ -233,6 +241,9 @@ def _build_bambi_priors(
         Dict of Bambi Prior objects
     """
     priors = {
+        # Global intercept and residual SD - critical for reasonable prior predictive
+        "Intercept": bmb.Prior("Normal", mu=config["intercept_mu"], sigma=config["intercept_sigma"]),
+        "sigma": bmb.Prior("Exponential", lam=config["sigma_lam"]),
         # Random effects - Normal with HalfNormal SD prior
         "1|generation": bmb.Prior(
             "Normal", mu=0, sigma=bmb.Prior("HalfNormal", sigma=config["generation_sd"])
