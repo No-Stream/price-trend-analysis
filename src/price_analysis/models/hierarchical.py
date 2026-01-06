@@ -42,10 +42,10 @@ DEFAULT_PRIORS = {
     "transmission_sd": 0.3,
     "body_style_sd": 0.3,  # coupe/cab/targa/speedster - expect modest variation
     "color_category_sd": 0.3,  # standard/special/PTS/unknown - expect modest PTS premium
-    "age_slope_sd": 0.1,  # depreciation rate variation across generations
+    "age_slope_sd": 0.05,  # depreciation rate variation across generations
     # Fixed effect priors (truncated Normal scale parameters)
     "age_sigma": 0.05,  # bounded ≤0 (older = cheaper)
-    "mileage_sigma": 0.3,  # bounded ≤0 (more miles = cheaper)
+    "mileage_sigma": 0.2,  # bounded ≤0 (more miles = cheaper)
     "low_mileage_sigma": 0.2,  # bounded ≥0 (low miles = bonus)
     "log_mileage_sigma": 0.3,  # bounded ≤0 (for log-mileage parameterization)
 }
@@ -242,7 +242,9 @@ def _build_bambi_priors(
     """
     priors = {
         # Global intercept and residual SD - critical for reasonable prior predictive
-        "Intercept": bmb.Prior("Normal", mu=config["intercept_mu"], sigma=config["intercept_sigma"]),
+        "Intercept": bmb.Prior(
+            "Normal", mu=config["intercept_mu"], sigma=config["intercept_sigma"]
+        ),
         "sigma": bmb.Prior("Exponential", lam=config["sigma_lam"]),
         # Random effects - Normal with HalfNormal SD prior
         "1|generation": bmb.Prior(

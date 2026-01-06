@@ -114,6 +114,7 @@ def plot_prior_posterior(
         # For truncated normals: truncnorm(a, b, loc, scale) where a,b are standardized bounds
         params = {
             "1|generation_sigma": {"prior": stats.halfnorm(scale=0.5), "label": "Generation SD"},
+            "age|generation_sigma": {"prior": stats.halfnorm(scale=0.05), "label": "Age Slope SD"},
             "1|trim_tier_sigma": {"prior": stats.halfnorm(scale=0.7), "label": "Trim Tier SD"},
             "1|trans_type_sigma": {"prior": stats.halfnorm(scale=0.3), "label": "Trans Type SD"},
             # Truncated Normal(0, 0.05) bounded ≤0 (negative half-normal)
@@ -121,9 +122,9 @@ def plot_prior_posterior(
                 "prior": stats.truncnorm(a=-np.inf, b=0, loc=0, scale=0.05),
                 "label": "Age Effect",
             },
-            # Truncated Normal(0, 0.3) bounded ≤0 (negative half-normal)
+            # Truncated Normal(0, 0.2) bounded ≤0 (negative half-normal)
             "mileage_scaled": {
-                "prior": stats.truncnorm(a=-np.inf, b=0, loc=0, scale=0.3),
+                "prior": stats.truncnorm(a=-np.inf, b=0, loc=0, scale=0.2),
                 "label": "Mileage Effect",
             },
             # Truncated Normal(0, 0.2) bounded ≥0 (positive half-normal)

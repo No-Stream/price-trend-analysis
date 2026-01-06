@@ -40,13 +40,14 @@ def build_spline_model(
     mileage_df: int = 6,
     include_sale_year: bool = True,
     include_color: bool = False,
+    use_log_mileage: bool = True,
     priors: dict[str, Any] | None = None,
 ) -> bmb.Model:
     """Build spline model with partial pooling on categoricals.
 
     Model structure
     ---------------
-    log(price) = α + f(age) + g(log_mileage) + β_year
+    log(price) = α + f(age) + g(mileage_term) + β_year
                  + α_gen      [per generation]
                  + α_trim     [per trim_tier]
                  + α_trans    [per trans_type]
@@ -54,14 +55,16 @@ def build_spline_model(
                  + α_color    [per color_category, optional]
                  + ε
 
-    where f() and g() are B-spline basis expansions.
+    where f() and g() are B-spline basis expansions, and mileage_term is
+    either log_mileage or mileage_scaled depending on use_log_mileage.
 
-    Why log-mileage?
-    ----------------
+    Why log-mileage vs linear?
+    --------------------------
     Log transform captures diminishing marginal effect of additional miles:
     going from 5k→10k miles matters more than 50k→55k miles.
-    Combined with splines, this eliminates the need for a separate
-    is_low_mileage binary indicator.
+    However, splines on linear mileage (mileage_scaled) can discover this
+    shape empirically and may perform better if the true relationship
+    differs from log. Compare both parameterizations via LOO-CV.
 
     Why splines instead of linear?
     ------------------------------
@@ -72,9 +75,11 @@ def build_spline_model(
     Args:
         df: Model-ready DataFrame with required columns
         age_df: Degrees of freedom for age spline (default 6)
-        mileage_df: Degrees of freedom for log-mileage spline (default 6)
+        mileage_df: Degrees of freedom for mileage spline (default 6)
         include_sale_year: Whether to include sale_year as fixed effect
         include_color: Whether to include color_category as random intercept
+        use_log_mileage: If True, use bs(log_mileage). If False, use
+            bs(mileage_scaled) to let the spline discover the functional form.
         priors: Optional dict of custom priors. Keys can include:
             Global priors:
             - 'intercept_mu': Intercept mean (default 11.5, i.e. log($100k))
@@ -91,11 +96,12 @@ def build_spline_model(
     Returns:
         Bambi Model object (unfitted)
     """
+    mileage_col = "log_mileage" if use_log_mileage else "mileage_scaled"
 
     required_cols = [
         "log_price",
         "age",
-        "log_mileage",
+        mileage_col,
         "generation",
         "trim_tier",
         "trans_type",
@@ -110,7 +116,7 @@ def build_spline_model(
         raise ValueError(f"Missing required columns: {missing}")
 
     age_spline = f"bs(age, df={age_df})"
-    mileage_spline = f"bs(log_mileage, df={mileage_df})"
+    mileage_spline = f"bs({mileage_col}, df={mileage_df})"
 
     formula_parts = [
         "log_price ~ 1",
@@ -133,7 +139,11 @@ def build_spline_model(
 
     prior_config = {**DEFAULT_SPLINE_PRIORS, **(priors or {})}
     bambi_priors = _build_spline_priors(
-        prior_config, age_df=age_df, mileage_df=mileage_df, include_color=include_color
+        prior_config,
+        age_df=age_df,
+        mileage_df=mileage_df,
+        mileage_col=mileage_col,
+        include_color=include_color,
     )
 
     model = bmb.Model(formula, data=df, priors=bambi_priors, family="gaussian")
@@ -146,6 +156,7 @@ def _build_spline_priors(
     config: dict[str, float],
     age_df: int,
     mileage_df: int,
+    mileage_col: str = "log_mileage",
     include_color: bool = False,
 ) -> dict[str, Any]:
     """Convert config dict to Bambi prior specifications for spline model.
@@ -154,15 +165,18 @@ def _build_spline_priors(
         config: Dict with prior parameters
         age_df: Degrees of freedom for age spline (to construct term name)
         mileage_df: Degrees of freedom for mileage spline (to construct term name)
+        mileage_col: Column name for mileage variable (log_mileage or mileage_scaled)
         include_color: Whether model includes color_category random intercept
     """
     priors = {
         # Global intercept and residual SD - critical for reasonable prior predictive
-        "Intercept": bmb.Prior("Normal", mu=config["intercept_mu"], sigma=config["intercept_sigma"]),
+        "Intercept": bmb.Prior(
+            "Normal", mu=config["intercept_mu"], sigma=config["intercept_sigma"]
+        ),
         "sigma": bmb.Prior("Exponential", lam=config["sigma_lam"]),
         # Spline coefficient priors - prevents extreme predictions
         f"bs(age, df={age_df})": bmb.Prior("Normal", mu=0, sigma=config["spline_sigma"]),
-        f"bs(log_mileage, df={mileage_df})": bmb.Prior(
+        f"bs({mileage_col}, df={mileage_df})": bmb.Prior(
             "Normal", mu=0, sigma=config["spline_sigma"]
         ),
         # Random effects
@@ -244,6 +258,7 @@ def plot_spline_effect(
     idata: az.InferenceData,
     df: pd.DataFrame,
     variable: str,
+    mileage_col: str = "log_mileage",
     n_points: int = 100,
     ax: plt.Axes | None = None,
     credible_interval: float = 0.9,
@@ -262,7 +277,8 @@ def plot_spline_effect(
         model: Fitted Bambi model
         idata: InferenceData from model fitting (modified in-place)
         df: Original data (for computing medians and ranges)
-        variable: Variable to plot ("age" or "log_mileage_scaled")
+        variable: Variable to plot ("age", "log_mileage", or "mileage_scaled")
+        mileage_col: Which mileage column the model uses ("log_mileage" or "mileage_scaled")
         n_points: Number of points in the grid
         ax: Optional axes to plot on
         credible_interval: Width of credible interval (default 0.9)
@@ -277,7 +293,7 @@ def plot_spline_effect(
     var_max = df[variable].max()
     var_grid = np.linspace(var_min, var_max, n_points)
 
-    other_var = "log_mileage" if variable == "age" else "age"
+    other_var = mileage_col if variable == "age" else "age"
     other_median = df[other_var].median()
 
     gen_mode = df["generation"].mode().iloc[0]
@@ -328,7 +344,12 @@ def plot_spline_effect(
 
     ax.scatter(df[variable], df["log_price"], alpha=0.3, s=10, c="gray", label="Data")
 
-    var_label = "Age (years)" if variable == "age" else "log(Mileage)"
+    if variable == "age":
+        var_label = "Age (years)"
+    elif variable == "log_mileage":
+        var_label = "log(Mileage)"
+    else:
+        var_label = "Mileage (z-scored)"
     ax.set_xlabel(var_label)
     ax.set_ylabel("log(price)")
     ax.set_title(f"Spline Effect: {variable}")
@@ -341,14 +362,16 @@ def plot_spline_effects_grid(
     model: bmb.Model,
     idata: az.InferenceData,
     df: pd.DataFrame,
+    mileage_col: str = "log_mileage",
     figsize: tuple[int, int] = (14, 5),
 ) -> plt.Figure:
-    """Plot age and log-mileage spline effects side by side.
+    """Plot age and mileage spline effects side by side.
 
     Args:
         model: Fitted Bambi model
         idata: InferenceData from model fitting
         df: Original data
+        mileage_col: Which mileage column the model uses ("log_mileage" or "mileage_scaled")
         figsize: Figure size
 
     Returns:
@@ -356,8 +379,8 @@ def plot_spline_effects_grid(
     """
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    plot_spline_effect(model, idata, df, "age", ax=axes[0])
-    plot_spline_effect(model, idata, df, "log_mileage", ax=axes[1])
+    plot_spline_effect(model, idata, df, "age", mileage_col=mileage_col, ax=axes[0])
+    plot_spline_effect(model, idata, df, mileage_col, mileage_col=mileage_col, ax=axes[1])
 
     fig.tight_layout()
     return fig
@@ -376,11 +399,11 @@ def predict_spline_price(
     sale_year: int,
     include_sale_year: bool = False,
     color_category: str | None = None,
+    use_log_mileage: bool = True,
+    mileage_mean: float | None = None,
+    mileage_std: float | None = None,
 ) -> dict:
     """Predict price distribution for a specific car using the spline model.
-
-    Unlike the hierarchical model's predict_price(), this function uses
-    log_mileage instead of mileage_scaled + is_low_mileage.
 
     Args:
         model: Fitted Bambi spline model
@@ -391,30 +414,38 @@ def predict_spline_price(
         trans_type: Transmission type (e.g., "manual", "pdk", "auto")
         body_style: Body style (e.g., "coupe", "cabriolet", "targa")
         model_year: Model year of car
-        mileage: Current mileage (raw miles, will be log-transformed)
+        mileage: Current mileage (raw miles)
         sale_year: Year of (hypothetical) sale
         include_sale_year: Whether the model includes sale_year as predictor
         color_category: Color category (e.g., "standard", "special", "pts").
             If None, uses mode from df. Only needed if model was built with
             include_color=True.
+        use_log_mileage: If True, use log_mileage. If False, use mileage_scaled.
+        mileage_mean: Mean mileage for z-scoring (required if use_log_mileage=False)
+        mileage_std: Std mileage for z-scoring (required if use_log_mileage=False)
 
     Returns:
         Dict with price predictions and uncertainty intervals, compatible
         with hierarchical model's predict_price() output structure.
     """
     age = sale_year - model_year
-    log_mileage = np.log(max(mileage, 1))
 
     new_data = pd.DataFrame(
         {
             "age": [age],
-            "log_mileage": [log_mileage],
             "generation": pd.Categorical([generation], categories=df["generation"].cat.categories),
             "trim_tier": pd.Categorical([trim_tier], categories=df["trim_tier"].cat.categories),
             "trans_type": pd.Categorical([trans_type], categories=df["trans_type"].cat.categories),
             "body_style": pd.Categorical([body_style], categories=df["body_style"].cat.categories),
         }
     )
+
+    if use_log_mileage:
+        new_data["log_mileage"] = np.log(max(mileage, 1))
+    else:
+        if mileage_mean is None or mileage_std is None:
+            raise ValueError("mileage_mean and mileage_std required when use_log_mileage=False")
+        new_data["mileage_scaled"] = (mileage - mileage_mean) / mileage_std
 
     if include_sale_year:
         new_data["sale_year"] = sale_year
